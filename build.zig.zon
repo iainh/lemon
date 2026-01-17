@@ -1,0 +1,17 @@
+.{
+    .name = .lemon,
+    .version = "0.1.0",
+    .fingerprint = 0x9e78092415fd8481,
+    .paths = .{
+        "src/",
+        "build.zig",
+        "build.zig.zon",
+        "README.md",
+    },
+    .dependencies = .{
+        .objc = .{
+            .url = "https://github.com/mitchellh/zig-objc/archive/refs/heads/main.tar.gz",
+            .hash = "zig_objc-0.0.0-Ir_Sp5wTAQDuSB-PaIBSxNPhnQFT-H8UGd5kBAdnUaD4",
+        },
+    },
+}
