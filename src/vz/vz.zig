@@ -98,8 +98,8 @@ pub const Configuration = struct {
         self.obj.msgSend(void, objc.sel("setDirectorySharingDevices:"), .{new_array});
     }
 
-    pub fn validate(self: *Configuration) !void {
-        _ = self;
+    pub fn validate(self: *Configuration) bool {
+        return self.obj.msgSend(bool, objc.sel("validateWithError:"), .{@as(?*anyopaque, null)});
     }
 };
 
@@ -148,8 +148,13 @@ pub const Storage = struct {
             toNSString(path) orelse return null,
         });
 
-        const attachment = VZDiskAttachment.msgSend(objc.Object, objc.sel("alloc"), .{})
-            .msgSend(?objc.Object, objc.sel("initWithURL:readOnly:error:"), .{ disk_url, read_only, @as(?*anyopaque, null) }) orelse return null;
+        const alloc_attachment = VZDiskAttachment.msgSend(objc.Object, objc.sel("alloc"), .{});
+        var err_ptr: ?objc.c.id = null;
+        const attachment = alloc_attachment.msgSend(?objc.Object, objc.sel("initWithURL:readOnly:error:"), .{
+            disk_url,
+            read_only,
+            @as(?*?objc.c.id, &err_ptr),
+        }) orelse return null;
 
         const block_device = VZBlockDevice.msgSend(objc.Object, objc.sel("alloc"), .{})
             .msgSend(objc.Object, objc.sel("initWithAttachment:"), .{attachment});

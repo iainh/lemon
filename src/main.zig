@@ -188,6 +188,11 @@ fn runVM(allocator: std.mem.Allocator, opts: cli.RunOptions) void {
         }
     }
 
+    if (!vz_config.validate()) {
+        std.debug.print("Error: Invalid VM configuration.\n", .{});
+        return;
+    }
+
     var vm = vz.VirtualMachine.init(vz_config) orelse {
         std.debug.print("Error: Failed to create virtual machine.\n", .{});
         return;
