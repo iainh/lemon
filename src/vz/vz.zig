@@ -1,6 +1,9 @@
 const std = @import("std");
 const objc = @import("objc");
 
+pub const runloop = @import("runloop.zig");
+pub const RunLoop = runloop.RunLoop;
+
 pub const VZError = error{
     ClassNotFound,
     AllocationFailed,
@@ -182,6 +185,37 @@ pub const VMState = enum(c_long) {
     restoring = 9,
 };
 
+pub const StartResult = enum {
+    success,
+    failed,
+    pending,
+};
+
+var g_vm_start_result: StartResult = .pending;
+var g_vm_stop_result: StartResult = .pending;
+
+const StartBlock = objc.Block(struct {
+    dummy: u8 = 0,
+}, .{?*anyopaque}, void);
+
+fn startCompletionHandler(ctx: *const StartBlock.Context, err: ?*anyopaque) callconv(.c) void {
+    _ = ctx;
+    if (err != null) {
+        g_vm_start_result = .failed;
+    } else {
+        g_vm_start_result = .success;
+    }
+}
+
+fn stopCompletionHandler(ctx: *const StartBlock.Context, err: ?*anyopaque) callconv(.c) void {
+    _ = ctx;
+    if (err != null) {
+        g_vm_stop_result = .failed;
+    } else {
+        g_vm_stop_result = .success;
+    }
+}
+
 pub const VirtualMachine = struct {
     obj: objc.Object,
 
@@ -201,6 +235,50 @@ pub const VirtualMachine = struct {
     pub fn state(self: *VirtualMachine) VMState {
         const raw_state = self.obj.msgSend(c_long, objc.sel("state"), .{});
         return @enumFromInt(raw_state);
+    }
+
+    pub fn canStart(self: *VirtualMachine) bool {
+        return self.obj.msgSend(bool, objc.sel("canStart"), .{});
+    }
+
+    pub fn canStop(self: *VirtualMachine) bool {
+        return self.obj.msgSend(bool, objc.sel("canStop"), .{});
+    }
+
+    pub fn canRequestStop(self: *VirtualMachine) bool {
+        return self.obj.msgSend(bool, objc.sel("canRequestStop"), .{});
+    }
+
+    pub fn start(self: *VirtualMachine) StartResult {
+        g_vm_start_result = .pending;
+
+        var block = StartBlock.init(.{}, &startCompletionHandler);
+        self.obj.msgSend(void, objc.sel("startWithCompletionHandler:"), .{&block});
+
+        var run_loop = RunLoop.current() orelse return .failed;
+        while (g_vm_start_result == .pending) {
+            run_loop.runOnce();
+        }
+
+        return g_vm_start_result;
+    }
+
+    pub fn requestStop(self: *VirtualMachine) bool {
+        return self.obj.msgSend(bool, objc.sel("requestStopWithError:"), .{@as(?*anyopaque, null)});
+    }
+
+    pub fn stop(self: *VirtualMachine) StartResult {
+        g_vm_stop_result = .pending;
+
+        var block = StartBlock.init(.{}, &stopCompletionHandler);
+        self.obj.msgSend(void, objc.sel("stopWithCompletionHandler:"), .{&block});
+
+        var run_loop = RunLoop.current() orelse return .failed;
+        while (g_vm_stop_result == .pending) {
+            run_loop.runOnce();
+        }
+
+        return g_vm_stop_result;
     }
 };
 

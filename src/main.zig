@@ -2,6 +2,7 @@ const std = @import("std");
 const vz = @import("vz/vz.zig");
 const cli = @import("cli.zig");
 const disk = @import("disk.zig");
+const sig = @import("signal.zig");
 
 pub fn main() void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -51,6 +52,10 @@ fn runVM(opts: cli.RunOptions) void {
         return;
     }
 
+    sig.installHandlers() catch {
+        std.debug.print("Warning: Failed to install signal handlers.\n", .{});
+    };
+
     std.debug.print("🍋 Lemon - Starting VM\n", .{});
     std.debug.print("  Kernel: {s}\n", .{opts.kernel});
     if (opts.initrd) |initrd| {
@@ -97,8 +102,49 @@ fn runVM(opts: cli.RunOptions) void {
         return;
     };
 
-    std.debug.print("\nVM created. Starting requires run loop integration (Phase 2).\n", .{});
-    std.debug.print("Current state: {s}\n", .{@tagName(vm.state())});
+    std.debug.print("Starting VM...\n", .{});
+
+    if (!vm.canStart()) {
+        std.debug.print("Error: VM cannot start. State: {s}\n", .{@tagName(vm.state())});
+        return;
+    }
+
+    const start_result = vm.start();
+    switch (start_result) {
+        .success => std.debug.print("VM started successfully.\n", .{}),
+        .failed => {
+            std.debug.print("Error: VM failed to start.\n", .{});
+            return;
+        },
+        .pending => unreachable,
+    }
+
+    std.debug.print("VM running. Press Ctrl+C to stop.\n", .{});
+
+    var run_loop = vz.RunLoop.current() orelse {
+        std.debug.print("Error: Failed to get run loop.\n", .{});
+        return;
+    };
+
+    while (!sig.isShutdownRequested()) {
+        const state = vm.state();
+        if (state == .stopped or state == .@"error") {
+            std.debug.print("\nVM stopped. State: {s}\n", .{@tagName(state)});
+            break;
+        }
+        run_loop.runOnce();
+    }
+
+    if (sig.isShutdownRequested()) {
+        std.debug.print("\nShutdown requested, stopping VM...\n", .{});
+        if (vm.canRequestStop()) {
+            _ = vm.requestStop();
+            while (vm.state() != .stopped and vm.state() != .@"error") {
+                run_loop.runOnce();
+            }
+        }
+        std.debug.print("VM stopped.\n", .{});
+    }
 }
 
 test "cli parsing" {
@@ -107,6 +153,10 @@ test "cli parsing" {
 
 test "disk module" {
     _ = disk;
+}
+
+test "signal module" {
+    _ = sig;
 }
 
 test "vz module" {
