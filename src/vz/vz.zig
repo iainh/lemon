@@ -82,6 +82,22 @@ pub const Configuration = struct {
         self.obj.msgSend(void, objc.sel("setEntropyDevices:"), .{entropy_array});
     }
 
+    pub fn addDirectoryShare(self: *Configuration, share: SharedDirectory) void {
+        const NSMutableArray = objc.getClass("NSMutableArray") orelse return;
+        const current_devices = self.obj.msgSend(objc.Object, objc.sel("directorySharingDevices"), .{});
+        const new_array = NSMutableArray.msgSend(objc.Object, objc.sel("arrayWithArray:"), .{current_devices});
+        new_array.msgSend(void, objc.sel("addObject:"), .{share.obj});
+        self.obj.msgSend(void, objc.sel("setDirectorySharingDevices:"), .{new_array});
+    }
+
+    pub fn addRosettaShare(self: *Configuration, share: RosettaShare) void {
+        const NSMutableArray = objc.getClass("NSMutableArray") orelse return;
+        const current_devices = self.obj.msgSend(objc.Object, objc.sel("directorySharingDevices"), .{});
+        const new_array = NSMutableArray.msgSend(objc.Object, objc.sel("arrayWithArray:"), .{current_devices});
+        new_array.msgSend(void, objc.sel("addObject:"), .{share.obj});
+        self.obj.msgSend(void, objc.sel("setDirectorySharingDevices:"), .{new_array});
+    }
+
     pub fn validate(self: *Configuration) !void {
         _ = self;
     }
@@ -142,6 +158,66 @@ pub const Storage = struct {
     }
 
     pub fn deinit(self: *Storage) void {
+        self.obj.release();
+    }
+};
+
+pub const SharedDirectory = struct {
+    obj: objc.Object,
+
+    pub fn init(host_path: [:0]const u8, tag: [:0]const u8, read_only: bool) ?SharedDirectory {
+        const VZSharedDirectory = objc.getClass("VZSharedDirectory") orelse return null;
+        const VZSingleDirectoryShare = objc.getClass("VZSingleDirectoryShare") orelse return null;
+        const VZVirtioFileSystemDevice = objc.getClass("VZVirtioFileSystemDeviceConfiguration") orelse return null;
+        const NSURL = objc.getClass("NSURL") orelse return null;
+
+        const url = NSURL.msgSend(objc.Object, objc.sel("fileURLWithPath:"), .{
+            toNSString(host_path) orelse return null,
+        });
+
+        const shared_dir = VZSharedDirectory.msgSend(objc.Object, objc.sel("alloc"), .{})
+            .msgSend(objc.Object, objc.sel("initWithURL:readOnly:"), .{ url, read_only });
+
+        const dir_share = VZSingleDirectoryShare.msgSend(objc.Object, objc.sel("alloc"), .{})
+            .msgSend(objc.Object, objc.sel("initWithDirectory:"), .{shared_dir});
+
+        const fs_device = VZVirtioFileSystemDevice.msgSend(objc.Object, objc.sel("alloc"), .{})
+            .msgSend(objc.Object, objc.sel("initWithTag:"), .{toNSString(tag) orelse return null});
+        fs_device.msgSend(void, objc.sel("setShare:"), .{dir_share});
+
+        return .{ .obj = fs_device };
+    }
+
+    pub fn deinit(self: *SharedDirectory) void {
+        self.obj.release();
+    }
+};
+
+pub fn isRosettaSupported() bool {
+    const VZLinuxRosettaDirectoryShare = objc.getClass("VZLinuxRosettaDirectoryShare") orelse return false;
+    return VZLinuxRosettaDirectoryShare.msgSend(bool, objc.sel("isSupported"), .{});
+}
+
+pub const RosettaShare = struct {
+    obj: objc.Object,
+
+    pub fn init(tag: [:0]const u8) ?RosettaShare {
+        if (!isRosettaSupported()) return null;
+
+        const VZLinuxRosettaDirectoryShare = objc.getClass("VZLinuxRosettaDirectoryShare") orelse return null;
+        const VZVirtioFileSystemDevice = objc.getClass("VZVirtioFileSystemDeviceConfiguration") orelse return null;
+
+        const rosetta_share = VZLinuxRosettaDirectoryShare.msgSend(objc.Object, objc.sel("alloc"), .{})
+            .msgSend(?objc.Object, objc.sel("initWithError:"), .{@as(?*anyopaque, null)}) orelse return null;
+
+        const fs_device = VZVirtioFileSystemDevice.msgSend(objc.Object, objc.sel("alloc"), .{})
+            .msgSend(objc.Object, objc.sel("initWithTag:"), .{toNSString(tag) orelse return null});
+        fs_device.msgSend(void, objc.sel("setShare:"), .{rosetta_share});
+
+        return .{ .obj = fs_device };
+    }
+
+    pub fn deinit(self: *RosettaShare) void {
         self.obj.release();
     }
 };

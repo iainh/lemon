@@ -97,6 +97,31 @@ fn runVM(opts: cli.RunOptions) void {
         std.debug.print("Warning: Failed to create NAT network device.\n", .{});
     }
 
+    var i: u8 = 0;
+    while (i < opts.share_count) : (i += 1) {
+        if (opts.shares[i]) |share| {
+            if (vz.SharedDirectory.init(share.host_path, share.tag, false)) |dir_share| {
+                config.addDirectoryShare(dir_share);
+                std.debug.print("  Share: {s} -> {s}\n", .{ share.host_path, share.tag });
+            } else {
+                std.debug.print("Warning: Failed to share directory: {s}\n", .{share.host_path});
+            }
+        }
+    }
+
+    if (opts.rosetta) {
+        if (vz.isRosettaSupported()) {
+            if (vz.RosettaShare.init("rosetta")) |rosetta| {
+                config.addRosettaShare(rosetta);
+                std.debug.print("  Rosetta: enabled\n", .{});
+            } else {
+                std.debug.print("Warning: Failed to enable Rosetta.\n", .{});
+            }
+        } else {
+            std.debug.print("Warning: Rosetta is not supported on this system.\n", .{});
+        }
+    }
+
     var vm = vz.VirtualMachine.init(config) orelse {
         std.debug.print("Error: Failed to create virtual machine.\n", .{});
         return;

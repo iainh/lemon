@@ -8,6 +8,11 @@ pub const Command = union(enum) {
     version,
 };
 
+pub const ShareMount = struct {
+    host_path: [:0]const u8,
+    tag: [:0]const u8,
+};
+
 pub const RunOptions = struct {
     kernel: [:0]const u8,
     initrd: ?[:0]const u8 = null,
@@ -15,6 +20,9 @@ pub const RunOptions = struct {
     cmdline: [:0]const u8 = "console=hvc0",
     cpus: u32 = 2,
     memory_mb: u64 = 512,
+    shares: [8]?ShareMount = [_]?ShareMount{null} ** 8,
+    share_count: u8 = 0,
+    rosetta: bool = false,
 };
 
 pub const CreateDiskOptions = struct {
@@ -71,6 +79,19 @@ fn parseRunCommand(allocator: std.mem.Allocator, args: *std.process.ArgIterator)
         } else if (std.mem.eql(u8, arg, "--memory") or std.mem.eql(u8, arg, "-m")) {
             const val = args.next() orelse return ParseError.MissingRequiredArg;
             opts.memory_mb = std.fmt.parseInt(u64, val, 10) catch return ParseError.InvalidValue;
+        } else if (std.mem.eql(u8, arg, "--share") or std.mem.eql(u8, arg, "-s")) {
+            const share_arg = args.next() orelse return ParseError.MissingRequiredArg;
+            if (opts.share_count >= 8) return ParseError.InvalidValue;
+            if (std.mem.indexOf(u8, share_arg, ":")) |colon_idx| {
+                const host_path = allocator.dupeZ(u8, share_arg[0..colon_idx]) catch return ParseError.OutOfMemory;
+                const tag = allocator.dupeZ(u8, share_arg[colon_idx + 1 ..]) catch return ParseError.OutOfMemory;
+                opts.shares[opts.share_count] = .{ .host_path = host_path, .tag = tag };
+                opts.share_count += 1;
+            } else {
+                return ParseError.InvalidValue;
+            }
+        } else if (std.mem.eql(u8, arg, "--rosetta")) {
+            opts.rosetta = true;
         } else if (!std.mem.startsWith(u8, arg, "-") and !has_kernel) {
             opts.kernel = allocator.dupeZ(u8, arg) catch return ParseError.OutOfMemory;
             has_kernel = true;
@@ -113,6 +134,8 @@ pub fn printHelp() void {
         \\    -c, --cmdline <ARGS>    Kernel command line (default: console=hvc0)
         \\        --cpus <N>          Number of CPUs (default: 2)
         \\    -m, --memory <MB>       Memory in MB (default: 512)
+        \\    -s, --share <PATH:TAG>  Share host directory (mount with: mount -t virtiofs TAG /mnt)
+        \\        --rosetta           Enable Rosetta x86_64 emulation (Apple Silicon only)
         \\
         \\CREATE-DISK:
         \\    lemon create-disk <PATH> <SIZE_MB>
@@ -120,6 +143,7 @@ pub fn printHelp() void {
         \\EXAMPLES:
         \\    lemon run --kernel vmlinuz --initrd initrd.img
         \\    lemon run -k vmlinuz -d disk.img -m 1024 --cpus 4
+        \\    lemon run -k vmlinuz --share /Users/me/code:code --rosetta
         \\    lemon create-disk disk.img 8192
         \\
     ;
