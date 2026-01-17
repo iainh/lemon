@@ -23,6 +23,8 @@ pub const RunOptions = struct {
     kernel: ?[:0]const u8 = null,
     initrd: ?[:0]const u8 = null,
     disk: ?[:0]const u8 = null,
+    iso: ?[:0]const u8 = null,
+    nvram: ?[:0]const u8 = null,
     cmdline: [:0]const u8 = "console=hvc0",
     cpus: u32 = 2,
     memory_mb: u64 = 512,
@@ -78,6 +80,10 @@ fn parseRunCommand(allocator: std.mem.Allocator, args: *std.process.ArgIterator)
             opts.initrd = args.next() orelse return ParseError.MissingRequiredArg;
         } else if (std.mem.eql(u8, arg, "--disk") or std.mem.eql(u8, arg, "-d")) {
             opts.disk = args.next() orelse return ParseError.MissingRequiredArg;
+        } else if (std.mem.eql(u8, arg, "--iso")) {
+            opts.iso = args.next() orelse return ParseError.MissingRequiredArg;
+        } else if (std.mem.eql(u8, arg, "--nvram")) {
+            opts.nvram = args.next() orelse return ParseError.MissingRequiredArg;
         } else if (std.mem.eql(u8, arg, "--cmdline") or std.mem.eql(u8, arg, "-c")) {
             opts.cmdline = args.next() orelse return ParseError.MissingRequiredArg;
         } else if (std.mem.eql(u8, arg, "--cpus")) {
@@ -104,7 +110,7 @@ fn parseRunCommand(allocator: std.mem.Allocator, args: *std.process.ArgIterator)
         }
     }
 
-    if (opts.kernel == null and opts.vm_name == null) return ParseError.MissingRequiredArg;
+    if (opts.kernel == null and opts.iso == null and opts.vm_name == null) return ParseError.MissingRequiredArg;
 
     return Command{ .run = opts };
 }
@@ -141,9 +147,11 @@ pub fn printHelp() void {
         \\    version         Show version information
         \\
         \\RUN OPTIONS:
-        \\    -k, --kernel <PATH>     Path to Linux kernel (required if no NAME)
+        \\    -k, --kernel <PATH>     Path to Linux kernel (required if no NAME or ISO)
         \\    -i, --initrd <PATH>     Path to initial ramdisk
         \\    -d, --disk <PATH>       Path to disk image
+        \\        --iso <PATH>        Boot from ISO image (uses EFI boot)
+        \\        --nvram <PATH>      Path to NVRAM file for EFI (auto-created if missing)
         \\    -c, --cmdline <ARGS>    Kernel command line (default: console=hvc0)
         \\        --cpus <N>          Number of CPUs (default: 2)
         \\    -m, --memory <MB>       Memory in MB (default: 512)

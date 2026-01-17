@@ -80,9 +80,11 @@ fn runVM(allocator: std.mem.Allocator, opts: cli.RunOptions) void {
         return;
     }
 
-    var kernel: [:0]const u8 = undefined;
+    var kernel: ?[:0]const u8 = opts.kernel;
     var initrd: ?[:0]const u8 = opts.initrd;
     var disk_path: ?[:0]const u8 = opts.disk;
+    const iso_path: ?[:0]const u8 = opts.iso;
+    const nvram_path: ?[:0]const u8 = opts.nvram;
     var cmdline: [:0]const u8 = opts.cmdline;
     var cpus: u32 = opts.cpus;
     var memory_mb: u64 = opts.memory_mb;
@@ -96,10 +98,7 @@ fn runVM(allocator: std.mem.Allocator, opts: cli.RunOptions) void {
             return;
         };
         if (config.findVM(cfg, name)) |vm| {
-            kernel = allocator.dupeZ(u8, vm.kernel) catch {
-                std.debug.print("Error: Out of memory.\n", .{});
-                return;
-            };
+            kernel = allocator.dupeZ(u8, vm.kernel) catch null;
             if (vm.initrd) |i| initrd = allocator.dupeZ(u8, i) catch null;
             if (vm.disk) |d| disk_path = allocator.dupeZ(u8, d) catch null;
             cmdline = allocator.dupeZ(u8, vm.cmdline) catch cmdline;
@@ -111,10 +110,12 @@ fn runVM(allocator: std.mem.Allocator, opts: cli.RunOptions) void {
             std.debug.print("Run 'lemon list' to see configured VMs.\n", .{});
             return;
         }
-    } else if (opts.kernel) |k| {
-        kernel = k;
-    } else {
-        std.debug.print("Error: No kernel specified.\n", .{});
+    }
+
+    const is_efi_boot = iso_path != null;
+
+    if (!is_efi_boot and kernel == null) {
+        std.debug.print("Error: No kernel or ISO specified.\n", .{});
         return;
     }
 
@@ -123,21 +124,25 @@ fn runVM(allocator: std.mem.Allocator, opts: cli.RunOptions) void {
     };
 
     std.debug.print("🍋 Lemon - Starting VM\n", .{});
-    std.debug.print("  Kernel: {s}\n", .{kernel});
-    if (initrd) |i| {
-        std.debug.print("  Initrd: {s}\n", .{i});
+    if (is_efi_boot) {
+        std.debug.print("  Boot mode: EFI (ISO)\n", .{});
+        std.debug.print("  ISO: {s}\n", .{iso_path.?});
+        if (nvram_path) |n| {
+            std.debug.print("  NVRAM: {s}\n", .{n});
+        }
+    } else {
+        std.debug.print("  Boot mode: Linux direct\n", .{});
+        std.debug.print("  Kernel: {s}\n", .{kernel.?});
+        if (initrd) |i| {
+            std.debug.print("  Initrd: {s}\n", .{i});
+        }
+        std.debug.print("  Cmdline: {s}\n", .{cmdline});
     }
     if (disk_path) |d| {
         std.debug.print("  Disk: {s}\n", .{d});
     }
     std.debug.print("  CPUs: {d}\n", .{cpus});
     std.debug.print("  Memory: {d} MB\n", .{memory_mb});
-    std.debug.print("  Cmdline: {s}\n", .{cmdline});
-
-    const boot_loader = vz.LinuxBootLoader.init(kernel, initrd, cmdline) orelse {
-        std.debug.print("Error: Failed to create boot loader. Check kernel path.\n", .{});
-        return;
-    };
 
     var vz_config = vz.Configuration.init(cpus, memory_mb * 1024 * 1024) orelse {
         std.debug.print("Error: Failed to create VM configuration.\n", .{});
@@ -145,7 +150,69 @@ fn runVM(allocator: std.mem.Allocator, opts: cli.RunOptions) void {
     };
     defer vz_config.deinit();
 
-    vz_config.setBootLoader(boot_loader);
+    if (is_efi_boot) {
+        const nvram_rel = nvram_path orelse "nvram.bin";
+
+        const cwd = std.fs.cwd().realpathAlloc(allocator, ".") catch {
+            std.debug.print("Error: Failed to get current directory.\n", .{});
+            return;
+        };
+        defer allocator.free(cwd);
+
+        const actual_nvram_path = std.fs.path.joinZ(allocator, &.{ cwd, nvram_rel }) catch {
+            std.debug.print("Error: Failed to construct NVRAM path.\n", .{});
+            return;
+        };
+        defer allocator.free(actual_nvram_path);
+
+        const nvram_exists = blk: {
+            std.fs.cwd().access(nvram_rel, .{}) catch break :blk false;
+            break :blk true;
+        };
+
+        const efi_store = if (nvram_exists)
+            vz.EFIVariableStore.load(actual_nvram_path)
+        else
+            vz.EFIVariableStore.create(actual_nvram_path);
+
+        const store = efi_store orelse {
+            std.debug.print("Error: Failed to create/load EFI variable store at: {s}\n", .{actual_nvram_path});
+            return;
+        };
+
+        if (!nvram_exists) {
+            std.debug.print("  Created NVRAM: {s}\n", .{actual_nvram_path});
+        } else {
+            std.debug.print("  Loaded NVRAM: {s}\n", .{actual_nvram_path});
+        }
+
+        const efi_boot = vz.EFIBootLoader.init(store) orelse {
+            std.debug.print("Error: Failed to create EFI boot loader.\n", .{});
+            return;
+        };
+        std.debug.print("  EFI boot loader created\n", .{});
+
+        const platform = vz.GenericPlatformConfiguration.init() orelse {
+            std.debug.print("Error: Failed to create platform configuration.\n", .{});
+            return;
+        };
+
+        vz_config.setEFIBootLoader(efi_boot);
+        vz_config.setPlatform(platform);
+
+        const iso_storage = vz.USBStorage.initWithISO(iso_path.?) orelse {
+            std.debug.print("Error: Failed to attach ISO: {s}\n", .{iso_path.?});
+            return;
+        };
+        vz_config.addUSBStorage(iso_storage);
+    } else {
+        const boot_loader = vz.LinuxBootLoader.init(kernel.?, initrd, cmdline) orelse {
+            std.debug.print("Error: Failed to create boot loader. Check kernel path.\n", .{});
+            return;
+        };
+        vz_config.setBootLoader(boot_loader);
+    }
+
     vz_config.addSerialConsole();
     vz_config.addEntropy();
 

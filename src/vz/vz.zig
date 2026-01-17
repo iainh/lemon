@@ -36,6 +36,22 @@ pub const Configuration = struct {
         self.obj.msgSend(void, objc.sel("setBootLoader:"), .{boot_loader.obj});
     }
 
+    pub fn setEFIBootLoader(self: *Configuration, boot_loader: EFIBootLoader) void {
+        self.obj.msgSend(void, objc.sel("setBootLoader:"), .{boot_loader.obj});
+    }
+
+    pub fn setPlatform(self: *Configuration, platform: GenericPlatformConfiguration) void {
+        self.obj.msgSend(void, objc.sel("setPlatform:"), .{platform.obj});
+    }
+
+    pub fn addUSBStorage(self: *Configuration, storage: USBStorage) void {
+        const NSMutableArray = objc.getClass("NSMutableArray") orelse return;
+        const current_devices = self.obj.msgSend(objc.Object, objc.sel("storageDevices"), .{});
+        const new_array = NSMutableArray.msgSend(objc.Object, objc.sel("arrayWithArray:"), .{current_devices});
+        new_array.msgSend(void, objc.sel("addObject:"), .{storage.obj});
+        self.obj.msgSend(void, objc.sel("setStorageDevices:"), .{new_array});
+    }
+
     pub fn addStorageDevice(self: *Configuration, storage: Storage) void {
         const NSMutableArray = objc.getClass("NSMutableArray") orelse return;
         const current_devices = self.obj.msgSend(objc.Object, objc.sel("storageDevices"), .{});
@@ -136,6 +152,151 @@ pub const LinuxBootLoader = struct {
     }
 };
 
+/// EFI Variable Store - persists UEFI variables between boots
+pub const EFIVariableStore = struct {
+    obj: objc.Object,
+
+    /// Create a new EFI variable store at the given path
+    pub fn create(path: [:0]const u8) ?EFIVariableStore {
+        const VZEFIVariableStore = objc.getClass("VZEFIVariableStore") orelse return null;
+        const NSURL = objc.getClass("NSURL") orelse return null;
+
+        const path_str = toNSString(path) orelse return null;
+        const url = NSURL.msgSend(objc.Object, objc.sel("fileURLWithPath:"), .{path_str});
+
+        // Use raw msgSend to work around zig-objc optional return type issue
+        const c = @import("objc").c;
+        const MsgSendFn = *const fn (c.id, c.SEL, c.id, c_ulong, ?*anyopaque) callconv(.c) c.id;
+        const msg_send_fn: MsgSendFn = @ptrCast(&c.objc_msgSend);
+
+        const allocated = VZEFIVariableStore.msgSend(objc.Object, objc.sel("alloc"), .{});
+        const raw_obj = msg_send_fn(
+            allocated.value,
+            objc.sel("initCreatingVariableStoreAtURL:options:error:").value,
+            url.value,
+            0,
+            null,
+        );
+
+        if (raw_obj == null) return null;
+        return .{ .obj = objc.Object{ .value = raw_obj.? } };
+    }
+
+    /// Load an existing EFI variable store from the given path
+    pub fn load(path: [:0]const u8) ?EFIVariableStore {
+        const VZEFIVariableStore = objc.getClass("VZEFIVariableStore") orelse return null;
+        const NSURL = objc.getClass("NSURL") orelse return null;
+
+        const path_str = toNSString(path) orelse return null;
+        const url = NSURL.msgSend(objc.Object, objc.sel("fileURLWithPath:"), .{path_str});
+
+        // Use raw msgSend to work around zig-objc optional return type issue
+        const c = @import("objc").c;
+        const MsgSendFn = *const fn (c.id, c.SEL, c.id) callconv(.c) c.id;
+        const msg_send_fn: MsgSendFn = @ptrCast(&c.objc_msgSend);
+
+        const allocated = VZEFIVariableStore.msgSend(objc.Object, objc.sel("alloc"), .{});
+        const raw_obj = msg_send_fn(
+            allocated.value,
+            objc.sel("initWithURL:").value,
+            url.value,
+        );
+
+        if (raw_obj == null) return null;
+        return .{ .obj = objc.Object{ .value = raw_obj.? } };
+    }
+
+    pub fn deinit(self: *EFIVariableStore) void {
+        self.obj.release();
+    }
+};
+
+/// EFI Boot Loader - boots via UEFI firmware (required for ISO boot)
+pub const EFIBootLoader = struct {
+    obj: objc.Object,
+
+    pub fn init(variable_store: EFIVariableStore) ?EFIBootLoader {
+        const VZEFIBootLoader = objc.getClass("VZEFIBootLoader") orelse return null;
+
+        const obj = VZEFIBootLoader.msgSend(objc.Object, objc.sel("alloc"), .{})
+            .msgSend(objc.Object, objc.sel("init"), .{});
+
+        // Use raw msgSend to set the variable store
+        const c = @import("objc").c;
+        const SetterFn = *const fn (c.id, c.SEL, c.id) callconv(.c) void;
+        const setter_fn: SetterFn = @ptrCast(&c.objc_msgSend);
+        setter_fn(
+            obj.value,
+            objc.sel("setVariableStore:").value,
+            variable_store.obj.value,
+        );
+
+        return .{ .obj = obj };
+    }
+
+    pub fn deinit(self: *EFIBootLoader) void {
+        self.obj.release();
+    }
+};
+
+/// Generic Platform Configuration - for Linux VMs on ARM64
+pub const GenericPlatformConfiguration = struct {
+    obj: objc.Object,
+
+    pub fn init() ?GenericPlatformConfiguration {
+        const VZGenericPlatformConfiguration = objc.getClass("VZGenericPlatformConfiguration") orelse return null;
+
+        const obj = VZGenericPlatformConfiguration.msgSend(objc.Object, objc.sel("alloc"), .{})
+            .msgSend(objc.Object, objc.sel("init"), .{});
+
+        return .{ .obj = obj };
+    }
+
+    pub fn deinit(self: *GenericPlatformConfiguration) void {
+        self.obj.release();
+    }
+};
+
+/// USB Mass Storage Device - for mounting ISOs as bootable USB drives
+pub const USBStorage = struct {
+    obj: objc.Object,
+
+    pub fn initWithISO(path: [:0]const u8) ?USBStorage {
+        const VZDiskAttachment = objc.getClass("VZDiskImageStorageDeviceAttachment") orelse return null;
+        const VZUSBMassStorage = objc.getClass("VZUSBMassStorageDeviceConfiguration") orelse return null;
+        const NSURL = objc.getClass("NSURL") orelse return null;
+
+        const path_str = toNSString(path) orelse return null;
+        const disk_url = NSURL.msgSend(objc.Object, objc.sel("fileURLWithPath:"), .{path_str});
+
+        // Use raw msgSend to work around zig-objc optional return type issue
+        const c = @import("objc").c;
+        const MsgSendFn = *const fn (c.id, c.SEL, c.id, u8, ?*anyopaque) callconv(.c) c.id;
+        const msg_send_fn: MsgSendFn = @ptrCast(&c.objc_msgSend);
+
+        const alloc_obj = VZDiskAttachment.msgSend(objc.Object, objc.sel("alloc"), .{});
+        const raw_attachment = msg_send_fn(
+            alloc_obj.value,
+            objc.sel("initWithURL:readOnly:error:").value,
+            disk_url.value,
+            1, // readOnly = YES
+            null,
+        );
+
+        if (raw_attachment == null) return null;
+        const attachment = objc.Object{ .value = raw_attachment.? };
+
+        const usb_device = VZUSBMassStorage.msgSend(objc.Object, objc.sel("alloc"), .{})
+            .msgSend(objc.Object, objc.sel("initWithAttachment:"), .{attachment.value});
+
+        return .{ .obj = usb_device };
+    }
+
+    pub fn deinit(self: *USBStorage) void {
+        self.obj.release();
+    }
+};
+
 pub const Storage = struct {
     obj: objc.Object,
 
@@ -144,20 +305,28 @@ pub const Storage = struct {
         const VZBlockDevice = objc.getClass("VZVirtioBlockDeviceConfiguration") orelse return null;
         const NSURL = objc.getClass("NSURL") orelse return null;
 
-        const disk_url = NSURL.msgSend(objc.Object, objc.sel("fileURLWithPath:"), .{
-            toNSString(path) orelse return null,
-        });
+        const path_str = toNSString(path) orelse return null;
+        const disk_url = NSURL.msgSend(objc.Object, objc.sel("fileURLWithPath:"), .{path_str});
 
-        const alloc_attachment = VZDiskAttachment.msgSend(objc.Object, objc.sel("alloc"), .{});
-        var err_ptr: ?objc.c.id = null;
-        const attachment = alloc_attachment.msgSend(?objc.Object, objc.sel("initWithURL:readOnly:error:"), .{
-            disk_url,
-            read_only,
-            @as(?*?objc.c.id, &err_ptr),
-        }) orelse return null;
+        // Use raw msgSend to work around zig-objc optional return type issue
+        const c = @import("objc").c;
+        const MsgSendFn = *const fn (c.id, c.SEL, c.id, u8, ?*anyopaque) callconv(.c) c.id;
+        const msg_send_fn: MsgSendFn = @ptrCast(&c.objc_msgSend);
+
+        const alloc_obj = VZDiskAttachment.msgSend(objc.Object, objc.sel("alloc"), .{});
+        const raw_attachment = msg_send_fn(
+            alloc_obj.value,
+            objc.sel("initWithURL:readOnly:error:").value,
+            disk_url.value,
+            if (read_only) 1 else 0,
+            null,
+        );
+
+        if (raw_attachment == null) return null;
+        const attachment = objc.Object{ .value = raw_attachment.? };
 
         const block_device = VZBlockDevice.msgSend(objc.Object, objc.sel("alloc"), .{})
-            .msgSend(objc.Object, objc.sel("initWithAttachment:"), .{attachment});
+            .msgSend(objc.Object, objc.sel("initWithAttachment:"), .{attachment.value});
 
         return .{ .obj = block_device };
     }
