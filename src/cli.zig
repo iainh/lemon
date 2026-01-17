@@ -4,8 +4,14 @@ const vz = @import("vz/vz.zig");
 pub const Command = union(enum) {
     run: RunOptions,
     create_disk: CreateDiskOptions,
+    list,
+    inspect: InspectOptions,
     help,
     version,
+};
+
+pub const InspectOptions = struct {
+    name: [:0]const u8,
 };
 
 pub const ShareMount = struct {
@@ -14,7 +20,7 @@ pub const ShareMount = struct {
 };
 
 pub const RunOptions = struct {
-    kernel: [:0]const u8,
+    kernel: ?[:0]const u8 = null,
     initrd: ?[:0]const u8 = null,
     disk: ?[:0]const u8 = null,
     cmdline: [:0]const u8 = "console=hvc0",
@@ -23,6 +29,7 @@ pub const RunOptions = struct {
     shares: [8]?ShareMount = [_]?ShareMount{null} ** 8,
     share_count: u8 = 0,
     rosetta: bool = false,
+    vm_name: ?[:0]const u8 = null,
 };
 
 pub const CreateDiskOptions = struct {
@@ -48,6 +55,10 @@ pub fn parseArgs(allocator: std.mem.Allocator) ParseError!Command {
         return parseRunCommand(allocator, &args);
     } else if (std.mem.eql(u8, cmd_str, "create-disk")) {
         return parseCreateDiskCommand(&args);
+    } else if (std.mem.eql(u8, cmd_str, "list") or std.mem.eql(u8, cmd_str, "ls")) {
+        return .list;
+    } else if (std.mem.eql(u8, cmd_str, "inspect")) {
+        return parseInspectCommand(&args);
     } else if (std.mem.eql(u8, cmd_str, "help") or std.mem.eql(u8, cmd_str, "--help") or std.mem.eql(u8, cmd_str, "-h")) {
         return .help;
     } else if (std.mem.eql(u8, cmd_str, "version") or std.mem.eql(u8, cmd_str, "--version") or std.mem.eql(u8, cmd_str, "-V")) {
@@ -58,15 +69,11 @@ pub fn parseArgs(allocator: std.mem.Allocator) ParseError!Command {
 }
 
 fn parseRunCommand(allocator: std.mem.Allocator, args: *std.process.ArgIterator) ParseError!Command {
-    var opts = RunOptions{
-        .kernel = undefined,
-    };
-    var has_kernel = false;
+    var opts = RunOptions{};
 
     while (args.next()) |arg| {
         if (std.mem.eql(u8, arg, "--kernel") or std.mem.eql(u8, arg, "-k")) {
             opts.kernel = args.next() orelse return ParseError.MissingRequiredArg;
-            has_kernel = true;
         } else if (std.mem.eql(u8, arg, "--initrd") or std.mem.eql(u8, arg, "-i")) {
             opts.initrd = args.next() orelse return ParseError.MissingRequiredArg;
         } else if (std.mem.eql(u8, arg, "--disk") or std.mem.eql(u8, arg, "-d")) {
@@ -92,13 +99,12 @@ fn parseRunCommand(allocator: std.mem.Allocator, args: *std.process.ArgIterator)
             }
         } else if (std.mem.eql(u8, arg, "--rosetta")) {
             opts.rosetta = true;
-        } else if (!std.mem.startsWith(u8, arg, "-") and !has_kernel) {
-            opts.kernel = allocator.dupeZ(u8, arg) catch return ParseError.OutOfMemory;
-            has_kernel = true;
+        } else if (!std.mem.startsWith(u8, arg, "-") and opts.vm_name == null and opts.kernel == null) {
+            opts.vm_name = allocator.dupeZ(u8, arg) catch return ParseError.OutOfMemory;
         }
     }
 
-    if (!has_kernel) return ParseError.MissingRequiredArg;
+    if (opts.kernel == null and opts.vm_name == null) return ParseError.MissingRequiredArg;
 
     return Command{ .run = opts };
 }
@@ -114,6 +120,11 @@ fn parseCreateDiskCommand(args: *std.process.ArgIterator) ParseError!Command {
     } };
 }
 
+fn parseInspectCommand(args: *std.process.ArgIterator) ParseError!Command {
+    const name = args.next() orelse return ParseError.MissingRequiredArg;
+    return Command{ .inspect = .{ .name = name } };
+}
+
 pub fn printHelp() void {
     const help =
         \\🍋 Lemon - macOS Virtualization.framework CLI
@@ -122,13 +133,15 @@ pub fn printHelp() void {
         \\    lemon <COMMAND> [OPTIONS]
         \\
         \\COMMANDS:
-        \\    run             Boot a Linux virtual machine
+        \\    run [NAME]      Boot a VM (by config name or with options)
+        \\    list, ls        List configured VMs
+        \\    inspect <NAME>  Show VM configuration details
         \\    create-disk     Create a raw disk image
         \\    help            Show this help message
         \\    version         Show version information
         \\
         \\RUN OPTIONS:
-        \\    -k, --kernel <PATH>     Path to Linux kernel (required)
+        \\    -k, --kernel <PATH>     Path to Linux kernel (required if no NAME)
         \\    -i, --initrd <PATH>     Path to initial ramdisk
         \\    -d, --disk <PATH>       Path to disk image
         \\    -c, --cmdline <ARGS>    Kernel command line (default: console=hvc0)
@@ -140,7 +153,12 @@ pub fn printHelp() void {
         \\CREATE-DISK:
         \\    lemon create-disk <PATH> <SIZE_MB>
         \\
+        \\CONFIG FILE:
+        \\    VMs can be defined in ~/.config/lemon/vms.json
+        \\    Run 'lemon list' for an example config format.
+        \\
         \\EXAMPLES:
+        \\    lemon run alpine                              # Run VM by name from config
         \\    lemon run --kernel vmlinuz --initrd initrd.img
         \\    lemon run -k vmlinuz -d disk.img -m 1024 --cpus 4
         \\    lemon run -k vmlinuz --share /Users/me/code:code --rosetta
