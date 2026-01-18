@@ -127,6 +127,10 @@ pub const VirtualMachineView = struct {
         self.obj.msgSend(void, objc.sel("setVirtualMachine:"), .{vm});
     }
 
+    pub fn setAutomaticallyReconfiguresDisplay(self: *VirtualMachineView, enabled: bool) void {
+        self.obj.msgSend(void, objc.sel("setAutomaticallyReconfiguresDisplay:"), .{enabled});
+    }
+
     pub fn deinit(self: VirtualMachineView) void {
         self.obj.release();
     }

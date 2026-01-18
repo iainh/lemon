@@ -399,6 +399,7 @@ fn runVM(allocator: std.mem.Allocator, opts: cli.RunOptions) void {
             return;
         };
         vm_view.setVirtualMachine(vm.obj);
+        vm_view.setAutomaticallyReconfiguresDisplay(true);
 
         window.setContentView(vm_view.obj);
         window.makeKeyAndOrderFront(null);
