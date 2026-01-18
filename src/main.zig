@@ -4,6 +4,7 @@ const cli = @import("cli.zig");
 const disk = @import("disk.zig");
 const sig = @import("signal.zig");
 const config = @import("config.zig");
+const images = @import("images.zig");
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -47,10 +48,56 @@ pub fn main() !void {
                 }
             };
         },
+        .pull => |opts| pullImage(allocator, opts),
+        .images => images.printImageList(),
         .list => listVMs(allocator),
         .inspect => |opts| inspectVM(allocator, opts.name),
         .help => cli.printHelp(),
         .version => cli.printVersion(),
+    }
+}
+
+fn pullImage(allocator: std.mem.Allocator, opts: cli.PullOptions) void {
+    if (images.findImage(opts.name)) |image| {
+        if (!opts.force and images.imageExists(allocator, image)) {
+            const path = images.getImagePath(allocator, image) catch {
+                std.debug.print("Error: Failed to get image path.\n", .{});
+                return;
+            };
+            defer allocator.free(path);
+            std.debug.print("Image already exists: {s}\n", .{path});
+            std.debug.print("Use --force to re-download.\n", .{});
+            return;
+        }
+
+        const path = images.downloadImage(allocator, image, opts.force) catch |err| {
+            switch (err) {
+                images.ImageError.DownloadFailed => std.debug.print("Error: Download failed.\n", .{}),
+                images.ImageError.CreateDirFailed => std.debug.print("Error: Failed to create images directory.\n", .{}),
+                images.ImageError.FileExists => {
+                    std.debug.print("Image already exists. Use --force to re-download.\n", .{});
+                },
+                images.ImageError.WriteFailed => std.debug.print("Error: Failed to write file.\n", .{}),
+                images.ImageError.ImageNotFound => std.debug.print("Error: Image not found.\n", .{}),
+                error.OutOfMemory => std.debug.print("Error: Out of memory.\n", .{}),
+                error.InvalidPath => std.debug.print("Error: Invalid path (HOME not set?).\n", .{}),
+            }
+            return;
+        };
+        defer allocator.free(path);
+
+        std.debug.print("\nTo use this image:\n", .{});
+        switch (image.image_type) {
+            .iso => {
+                std.debug.print("  lemon run --iso {s} --disk <disk.img> --gui\n", .{path});
+            },
+            .qcow2, .raw => {
+                std.debug.print("  lemon run --efi --disk {s} --gui\n", .{path});
+            },
+        }
+    } else {
+        std.debug.print("Error: Unknown image '{s}'.\n", .{opts.name});
+        std.debug.print("Run 'lemon images' to see available images.\n", .{});
     }
 }
 
@@ -470,4 +517,8 @@ test "config module" {
 
 test "vz module" {
     _ = vz.isSupported();
+}
+
+test "images module" {
+    _ = images;
 }

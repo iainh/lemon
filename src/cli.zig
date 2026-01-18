@@ -5,10 +5,17 @@ pub const Command = union(enum) {
     create: CreateVMOptions,
     delete: DeleteVMOptions,
     create_disk: CreateDiskOptions,
+    pull: PullOptions,
     list,
+    images,
     inspect: InspectOptions,
     help,
     version,
+};
+
+pub const PullOptions = struct {
+    name: [:0]const u8,
+    force: bool = false,
 };
 
 pub const InspectOptions = struct {
@@ -87,6 +94,10 @@ pub fn parseArgs(allocator: std.mem.Allocator) ParseError!Command {
         return parseCreateDiskCommand(&args);
     } else if (std.mem.eql(u8, cmd_str, "list") or std.mem.eql(u8, cmd_str, "ls")) {
         return .list;
+    } else if (std.mem.eql(u8, cmd_str, "pull")) {
+        return parsePullCommand(&args);
+    } else if (std.mem.eql(u8, cmd_str, "images")) {
+        return .images;
     } else if (std.mem.eql(u8, cmd_str, "inspect")) {
         return parseInspectCommand(&args);
     } else if (std.mem.eql(u8, cmd_str, "help") or std.mem.eql(u8, cmd_str, "--help") or std.mem.eql(u8, cmd_str, "-h")) {
@@ -226,6 +237,23 @@ fn parseDeleteVMCommand(args: *std.process.ArgIterator) ParseError!Command {
     return Command{ .delete = .{ .name = name } };
 }
 
+fn parsePullCommand(args: *std.process.ArgIterator) ParseError!Command {
+    var opts = PullOptions{ .name = undefined, .force = false };
+    var has_name = false;
+
+    while (args.next()) |arg| {
+        if (std.mem.eql(u8, arg, "--force") or std.mem.eql(u8, arg, "-f")) {
+            opts.force = true;
+        } else if (!std.mem.startsWith(u8, arg, "-") and !has_name) {
+            opts.name = arg;
+            has_name = true;
+        }
+    }
+
+    if (!has_name) return ParseError.MissingRequiredArg;
+    return Command{ .pull = opts };
+}
+
 pub fn printHelp() void {
     const help =
         \\🍋 Lemon - macOS Virtualization.framework CLI
@@ -240,6 +268,8 @@ pub fn printHelp() void {
         \\    list, ls        List configured VMs
         \\    inspect <NAME>  Show VM configuration details
         \\    create-disk     Create a raw disk image
+        \\    pull <NAME>     Download a cloud image (run 'lemon images' for list)
+        \\    images          List available images to download
         \\    help            Show this help message
         \\    version         Show version information
         \\

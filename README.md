@@ -31,6 +31,16 @@ codesign -f --entitlements lemon.entitlements -s - zig-out/bin/lemon
 
 ## Quick Start
 
+### Download and Run Ubuntu Cloud Image
+
+```bash
+# Download Ubuntu 24.04 cloud image
+lemon pull ubuntu
+
+# Run with GUI (cloud images need cloud-init or serial console access)
+lemon run --efi --disk ~/.local/share/lemon/images/ubuntu-noble-arm64.img --gui -m 2048
+```
+
 ### Running Fedora from ISO (Graphical)
 
 ```bash
@@ -70,6 +80,8 @@ lemon delete <NAME>           # Delete a VM configuration
 lemon list                    # List configured VMs
 lemon inspect <NAME>          # Show VM configuration details
 lemon create-disk <PATH> <MB> # Create a raw disk image
+lemon pull <NAME>             # Download a cloud image
+lemon images                  # List available images to download
 ```
 
 ### Run Options
