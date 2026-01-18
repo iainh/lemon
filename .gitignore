@@ -5,3 +5,6 @@ result
 result-*
 .direnv/
 _internal/
+fedora/
+install78.img
+nvram.bin
