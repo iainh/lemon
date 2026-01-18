@@ -25,7 +25,7 @@ pub const NSApplication = struct {
     pub fn runOnce(self: *NSApplication) void {
         const c = @import("objc").c;
         const NSDate = objc.getClass("NSDate") orelse return;
-        const distant_past = NSDate.msgSend(objc.Object, objc.sel("distantPast"), .{});
+        const timeout_date = NSDate.msgSend(objc.Object, objc.sel("dateWithTimeIntervalSinceNow:"), .{@as(f64, 0.1)});
 
         const MsgSendFn = *const fn (c.id, c.SEL, c_ulonglong, c.id, c.id, u8) callconv(.c) c.id;
         const msg_send_fn: MsgSendFn = @ptrCast(&c.objc_msgSend);
@@ -36,7 +36,7 @@ pub const NSApplication = struct {
             self.obj.value,
             objc.sel("nextEventMatchingMask:untilDate:inMode:dequeue:").value,
             0xFFFFFFFFFFFFFFFF,
-            distant_past.value,
+            timeout_date.value,
             NSDefaultRunLoopMode.value,
             1,
         );

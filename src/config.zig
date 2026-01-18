@@ -23,6 +23,17 @@ pub const ConfigFile = struct {
     vms: []VMConfig,
 };
 
+pub const ParsedConfig = struct {
+    value: ConfigFile,
+    arena: ?std.heap.ArenaAllocator,
+
+    pub fn deinit(self: *ParsedConfig) void {
+        if (self.arena) |*arena| {
+            arena.deinit();
+        }
+    }
+};
+
 pub const ConfigError = error{
     FileNotFound,
     ParseError,
@@ -47,12 +58,12 @@ pub fn ensureConfigDir(allocator: std.mem.Allocator) !void {
     std.fs.cwd().makePath(config_dir) catch {};
 }
 
-pub fn loadConfig(allocator: std.mem.Allocator) !ConfigFile {
+pub fn loadConfig(allocator: std.mem.Allocator) !ParsedConfig {
     const config_path = try getConfigPath(allocator);
     defer allocator.free(config_path);
 
     const file = std.fs.cwd().openFile(config_path, .{}) catch {
-        return ConfigFile{ .vms = &[_]VMConfig{} };
+        return ParsedConfig{ .value = ConfigFile{ .vms = &[_]VMConfig{} }, .arena = null };
     };
     defer file.close();
 
@@ -63,7 +74,7 @@ pub fn loadConfig(allocator: std.mem.Allocator) !ConfigFile {
         .allocate = .alloc_always,
     }) catch return ConfigError.ParseError;
 
-    return parsed.value;
+    return ParsedConfig{ .value = parsed.value, .arena = parsed.arena.* };
 }
 
 pub fn saveConfig(allocator: std.mem.Allocator, config: ConfigFile) !void {
@@ -91,26 +102,28 @@ pub fn findVM(config: ConfigFile, name: []const u8) ?VMConfig {
 }
 
 pub fn addVM(allocator: std.mem.Allocator, new_vm: VMConfig) !void {
-    const existing = loadConfig(allocator) catch ConfigFile{ .vms = &[_]VMConfig{} };
+    var existing = loadConfig(allocator) catch ParsedConfig{ .value = ConfigFile{ .vms = &[_]VMConfig{} }, .arena = null };
+    defer existing.deinit();
 
-    for (existing.vms) |vm| {
+    for (existing.value.vms) |vm| {
         if (std.mem.eql(u8, vm.name, new_vm.name)) {
             return ConfigError.ParseError;
         }
     }
 
-    var new_vms = try allocator.alloc(VMConfig, existing.vms.len + 1);
-    @memcpy(new_vms[0..existing.vms.len], existing.vms);
-    new_vms[existing.vms.len] = new_vm;
+    var new_vms = try allocator.alloc(VMConfig, existing.value.vms.len + 1);
+    @memcpy(new_vms[0..existing.value.vms.len], existing.value.vms);
+    new_vms[existing.value.vms.len] = new_vm;
 
     try saveConfig(allocator, ConfigFile{ .vms = new_vms });
 }
 
 pub fn removeVM(allocator: std.mem.Allocator, name: []const u8) !bool {
-    const existing = try loadConfig(allocator);
+    var existing = try loadConfig(allocator);
+    defer existing.deinit();
 
     var found = false;
-    for (existing.vms) |vm| {
+    for (existing.value.vms) |vm| {
         if (std.mem.eql(u8, vm.name, name)) {
             found = true;
             break;
@@ -119,9 +132,9 @@ pub fn removeVM(allocator: std.mem.Allocator, name: []const u8) !bool {
 
     if (!found) return false;
 
-    var new_vms = try allocator.alloc(VMConfig, existing.vms.len - 1);
+    var new_vms = try allocator.alloc(VMConfig, existing.value.vms.len - 1);
     var idx: usize = 0;
-    for (existing.vms) |vm| {
+    for (existing.value.vms) |vm| {
         if (!std.mem.eql(u8, vm.name, name)) {
             new_vms[idx] = vm;
             idx += 1;

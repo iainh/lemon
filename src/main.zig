@@ -8,7 +8,10 @@ const config = @import("config.zig");
 pub fn main() void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+
+    var arena = std.heap.ArenaAllocator.init(gpa.allocator());
+    defer arena.deinit();
+    const allocator = arena.allocator();
 
     const cmd = cli.parseArgs(allocator) catch |err| {
         switch (err) {
@@ -52,23 +55,25 @@ pub fn main() void {
 }
 
 fn listVMs(allocator: std.mem.Allocator) void {
-    const cfg = config.loadConfig(allocator) catch {
+    var cfg = config.loadConfig(allocator) catch {
         std.debug.print("Error: Failed to load config.\n", .{});
         config.printExampleConfig();
         return;
     };
-    config.printVMList(cfg);
-    if (cfg.vms.len == 0) {
+    defer cfg.deinit();
+    config.printVMList(cfg.value);
+    if (cfg.value.vms.len == 0) {
         config.printExampleConfig();
     }
 }
 
 fn inspectVM(allocator: std.mem.Allocator, name: [:0]const u8) void {
-    const cfg = config.loadConfig(allocator) catch {
+    var cfg = config.loadConfig(allocator) catch {
         std.debug.print("Error: Failed to load config.\n", .{});
         return;
     };
-    if (config.findVM(cfg, name)) |vm| {
+    defer cfg.deinit();
+    if (config.findVM(cfg.value, name)) |vm| {
         config.printVMDetails(vm);
     } else {
         std.debug.print("Error: VM '{s}' not found.\n", .{name});
@@ -140,11 +145,12 @@ fn runVM(allocator: std.mem.Allocator, opts: cli.RunOptions) void {
     const audio = opts.audio;
 
     if (opts.vm_name) |name| {
-        const cfg = config.loadConfig(allocator) catch {
+        var cfg = config.loadConfig(allocator) catch {
             std.debug.print("Error: Failed to load config.\n", .{});
             return;
         };
-        if (config.findVM(cfg, name)) |vm| {
+        defer cfg.deinit();
+        if (config.findVM(cfg.value, name)) |vm| {
             if (vm.kernel) |k| kernel = allocator.dupeZ(u8, k) catch null;
             if (vm.initrd) |i| initrd = allocator.dupeZ(u8, i) catch null;
             if (vm.disk) |d| disk_path = allocator.dupeZ(u8, d) catch null;
