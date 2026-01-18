@@ -40,6 +40,9 @@
             pkgs.apple-sdk_15
           ];
 
+          # codesign requires network access for timestamp/notarization checks
+          __darwinAllowLocalNetworking = true;
+
           buildPhase = ''
             export ZIG_GLOBAL_CACHE_DIR=$TMPDIR/zig-cache
             export ZIG_LOCAL_CACHE_DIR=$TMPDIR/zig-local-cache
@@ -49,7 +52,10 @@
           installPhase = ''
             mkdir -p $out/bin
             cp zig-out/bin/lemon $out/bin/
-          '' + pkgs.lib.optionalString pkgs.stdenv.isDarwin ''
+          '';
+
+          # codesign after fixup (strip) to avoid invalidating the signature
+          postFixup = pkgs.lib.optionalString pkgs.stdenv.isDarwin ''
             /usr/bin/codesign -f --entitlements ${./lemon.entitlements} -s - $out/bin/lemon
           '';
         };
