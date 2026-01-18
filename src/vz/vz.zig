@@ -124,6 +124,14 @@ pub const Configuration = struct {
         self.obj.msgSend(void, objc.sel("setSocketDevices:"), .{new_array});
     }
 
+    pub fn addAudioDevice(self: *Configuration, sound: VirtioSound) void {
+        const NSMutableArray = objc.getClass("NSMutableArray") orelse return;
+        const current_devices = self.obj.msgSend(objc.Object, objc.sel("audioDevices"), .{});
+        const new_array = NSMutableArray.msgSend(objc.Object, objc.sel("arrayWithArray:"), .{current_devices});
+        new_array.msgSend(void, objc.sel("addObject:"), .{sound.obj});
+        self.obj.msgSend(void, objc.sel("setAudioDevices:"), .{new_array});
+    }
+
     pub fn addDirectoryShare(self: *Configuration, share: SharedDirectory) void {
         const NSMutableArray = objc.getClass("NSMutableArray") orelse return;
         const current_devices = self.obj.msgSend(objc.Object, objc.sel("directorySharingDevices"), .{});
@@ -521,6 +529,39 @@ pub const VirtioSocket = struct {
     }
 
     pub fn deinit(self: *VirtioSocket) void {
+        self.obj.release();
+    }
+};
+
+pub const VirtioSound = struct {
+    obj: objc.Object,
+
+    pub fn init() ?VirtioSound {
+        const VZVirtioSoundDevice = objc.getClass("VZVirtioSoundDeviceConfiguration") orelse return null;
+        const VZVirtioSoundDeviceInputStreamConfiguration = objc.getClass("VZVirtioSoundDeviceInputStreamConfiguration") orelse return null;
+        const VZVirtioSoundDeviceOutputStreamConfiguration = objc.getClass("VZVirtioSoundDeviceOutputStreamConfiguration") orelse return null;
+        const NSArray = objc.getClass("NSArray") orelse return null;
+
+        const sound_device = VZVirtioSoundDevice.msgSend(objc.Object, objc.sel("alloc"), .{})
+            .msgSend(objc.Object, objc.sel("init"), .{});
+
+        const input_stream = VZVirtioSoundDeviceInputStreamConfiguration.msgSend(objc.Object, objc.sel("alloc"), .{})
+            .msgSend(objc.Object, objc.sel("init"), .{});
+
+        const output_stream = VZVirtioSoundDeviceOutputStreamConfiguration.msgSend(objc.Object, objc.sel("alloc"), .{})
+            .msgSend(objc.Object, objc.sel("init"), .{});
+
+        const streams_array = NSArray.msgSend(objc.Object, objc.sel("arrayWithObjects:count:"), .{
+            @as([*]const objc.Object, &[_]objc.Object{ input_stream, output_stream }),
+            @as(c_ulong, 2),
+        });
+
+        sound_device.msgSend(void, objc.sel("setStreams:"), .{streams_array});
+
+        return .{ .obj = sound_device };
+    }
+
+    pub fn deinit(self: *VirtioSound) void {
         self.obj.release();
     }
 };

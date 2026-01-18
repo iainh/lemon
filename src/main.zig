@@ -96,6 +96,7 @@ fn runVM(allocator: std.mem.Allocator, opts: cli.RunOptions) void {
     const height = opts.height;
     const virtio_input = opts.virtio_input;
     const vsock = opts.vsock;
+    const audio = opts.audio;
 
     if (opts.vm_name) |name| {
         const cfg = config.loadConfig(allocator) catch {
@@ -242,6 +243,15 @@ fn runVM(allocator: std.mem.Allocator, opts: cli.RunOptions) void {
             std.debug.print("  Vsock: enabled (guest CID: 3)\n", .{});
         } else {
             std.debug.print("Warning: Failed to create vsock device.\n", .{});
+        }
+    }
+
+    if (audio) {
+        if (vz.VirtioSound.init()) |sound| {
+            vz_config.addAudioDevice(sound);
+            std.debug.print("  Audio: enabled\n", .{});
+        } else {
+            std.debug.print("Warning: Failed to create audio device.\n", .{});
         }
     }
 

@@ -136,6 +136,21 @@ mkdir /mnt/projects
 mount -t virtiofs projects /mnt/projects
 ```
 
+## Enabling Audio
+
+Lemon supports virtio sound for audio input/output:
+
+```bash
+lemon run --kernel Image --initrd initramfs-virt --gui --audio --memory 1024 --cpus 2
+```
+
+Inside the VM, ensure the kernel has `CONFIG_SND_VIRTIO=y`. Most desktop distributions include this. You can verify with:
+
+```bash
+cat /proc/asound/cards
+# Should show: virtio-snd
+```
+
 ## Using Virtio Socket (vsock)
 
 Virtio socket provides fast, low-overhead communication between host and guest without network configuration:
