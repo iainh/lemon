@@ -41,6 +41,53 @@ pub const ConfigError = error{
     InvalidPath,
 };
 
+pub fn resolvePath(allocator: std.mem.Allocator, path: []const u8) ![]const u8 {
+    if (path.len == 0) return allocator.dupe(u8, path);
+
+    if (path[0] == '~') {
+        const home = std.posix.getenv("HOME") orelse return ConfigError.InvalidPath;
+        return std.fmt.allocPrint(allocator, "{s}{s}", .{ home, path[1..] });
+    }
+
+    if (std.fs.path.isAbsolute(path)) {
+        return allocator.dupe(u8, path);
+    }
+
+    const cwd = std.fs.cwd().realpathAlloc(allocator, ".") catch return ConfigError.InvalidPath;
+    defer allocator.free(cwd);
+    return std.fmt.allocPrint(allocator, "{s}/{s}", .{ cwd, path });
+}
+
+pub fn normalizeVMConfig(allocator: std.mem.Allocator, vm: VMConfig) !VMConfig {
+    var result = vm;
+
+    if (vm.kernel) |k| {
+        result.kernel = try resolvePath(allocator, k);
+    }
+    if (vm.initrd) |i| {
+        result.initrd = try resolvePath(allocator, i);
+    }
+    if (vm.disk) |d| {
+        result.disk = try resolvePath(allocator, d);
+    }
+    if (vm.nvram) |n| {
+        result.nvram = try resolvePath(allocator, n);
+    }
+
+    if (vm.shares.len > 0) {
+        const new_shares = try allocator.alloc(ShareConfig, vm.shares.len);
+        for (vm.shares, 0..) |share, i| {
+            new_shares[i] = ShareConfig{
+                .host_path = try resolvePath(allocator, share.host_path),
+                .tag = try allocator.dupe(u8, share.tag),
+            };
+        }
+        result.shares = new_shares;
+    }
+
+    return result;
+}
+
 fn getConfigDir(allocator: std.mem.Allocator) ![]const u8 {
     const home = std.posix.getenv("HOME") orelse return ConfigError.InvalidPath;
     return std.fmt.allocPrint(allocator, "{s}/.config/lemon", .{home});
@@ -111,10 +158,12 @@ pub fn addVM(allocator: std.mem.Allocator, new_vm: VMConfig) !void {
         }
     }
 
+    const normalized_vm = try normalizeVMConfig(allocator, new_vm);
+
     const new_vms = try allocator.alloc(VMConfig, existing.value.vms.len + 1);
     defer allocator.free(new_vms);
     @memcpy(new_vms[0..existing.value.vms.len], existing.value.vms);
-    new_vms[existing.value.vms.len] = new_vm;
+    new_vms[existing.value.vms.len] = normalized_vm;
 
     try saveConfig(allocator, ConfigFile{ .vms = new_vms });
 }
@@ -219,4 +268,29 @@ pub fn printExampleConfig() void {
         \\
     ;
     std.debug.print("{s}", .{example});
+}
+
+test "resolvePath handles absolute paths" {
+    const allocator = std.testing.allocator;
+    const result = try resolvePath(allocator, "/absolute/path/to/file");
+    defer allocator.free(result);
+    try std.testing.expectEqualStrings("/absolute/path/to/file", result);
+}
+
+test "resolvePath handles tilde expansion" {
+    const allocator = std.testing.allocator;
+    const result = try resolvePath(allocator, "~/some/path");
+    defer allocator.free(result);
+    const home = std.posix.getenv("HOME") orelse unreachable;
+    const expected = try std.fmt.allocPrint(allocator, "{s}/some/path", .{home});
+    defer allocator.free(expected);
+    try std.testing.expectEqualStrings(expected, result);
+}
+
+test "resolvePath handles relative paths" {
+    const allocator = std.testing.allocator;
+    const result = try resolvePath(allocator, "relative/path");
+    defer allocator.free(result);
+    try std.testing.expect(std.fs.path.isAbsolute(result));
+    try std.testing.expect(std.mem.endsWith(u8, result, "/relative/path"));
 }
