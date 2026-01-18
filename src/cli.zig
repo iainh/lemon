@@ -1,5 +1,4 @@
 const std = @import("std");
-const vz = @import("vz/vz.zig");
 
 pub const Command = union(enum) {
     run: RunOptions,

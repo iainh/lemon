@@ -111,7 +111,8 @@ pub fn addVM(allocator: std.mem.Allocator, new_vm: VMConfig) !void {
         }
     }
 
-    var new_vms = try allocator.alloc(VMConfig, existing.value.vms.len + 1);
+    const new_vms = try allocator.alloc(VMConfig, existing.value.vms.len + 1);
+    defer allocator.free(new_vms);
     @memcpy(new_vms[0..existing.value.vms.len], existing.value.vms);
     new_vms[existing.value.vms.len] = new_vm;
 
@@ -132,7 +133,8 @@ pub fn removeVM(allocator: std.mem.Allocator, name: []const u8) !bool {
 
     if (!found) return false;
 
-    var new_vms = try allocator.alloc(VMConfig, existing.value.vms.len - 1);
+    const new_vms = try allocator.alloc(VMConfig, existing.value.vms.len - 1);
+    defer allocator.free(new_vms);
     var idx: usize = 0;
     for (existing.value.vms) |vm| {
         if (!std.mem.eql(u8, vm.name, name)) {

@@ -5,7 +5,7 @@ const disk = @import("disk.zig");
 const sig = @import("signal.zig");
 const config = @import("config.zig");
 
-pub fn main() void {
+pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
 
@@ -203,7 +203,7 @@ fn runVM(allocator: std.mem.Allocator, opts: cli.RunOptions) void {
     std.debug.print("  CPUs: {d}\n", .{cpus});
     std.debug.print("  Memory: {d} MB\n", .{memory_mb});
 
-    var vz_config = vz.Configuration.init(cpus, memory_mb * 1024 * 1024) orelse {
+    const vz_config = vz.Configuration.init(cpus, memory_mb * 1024 * 1024) orelse {
         std.debug.print("Error: Failed to create VM configuration.\n", .{});
         return;
     };

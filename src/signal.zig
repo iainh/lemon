@@ -1,14 +1,14 @@
 const std = @import("std");
 const posix = std.posix;
 
-var g_shutdown_requested: bool = false;
+var g_shutdown_requested = std.atomic.Value(bool).init(false);
 
 pub fn isShutdownRequested() bool {
-    return @atomicLoad(bool, &g_shutdown_requested, .acquire);
+    return g_shutdown_requested.load(.acquire);
 }
 
 pub fn requestShutdown() void {
-    @atomicStore(bool, &g_shutdown_requested, true, .release);
+    g_shutdown_requested.store(true, .release);
 }
 
 fn signalHandler(sig: c_int) callconv(.c) void {

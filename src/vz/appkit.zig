@@ -106,7 +106,7 @@ pub const NSWindow = struct {
         self.obj.msgSend(void, objc.sel("setContentView:"), .{view});
     }
 
-    pub fn deinit(self: *NSWindow) void {
+    pub fn deinit(self: NSWindow) void {
         self.obj.release();
     }
 };
@@ -127,7 +127,7 @@ pub const VirtualMachineView = struct {
         self.obj.msgSend(void, objc.sel("setVirtualMachine:"), .{vm});
     }
 
-    pub fn deinit(self: *VirtualMachineView) void {
+    pub fn deinit(self: VirtualMachineView) void {
         self.obj.release();
     }
 };

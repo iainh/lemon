@@ -36,23 +36,23 @@ pub const Configuration = struct {
         return .{ .obj = obj };
     }
 
-    pub fn deinit(self: *Configuration) void {
+    pub fn deinit(self: Configuration) void {
         self.obj.release();
     }
 
-    pub fn setBootLoader(self: *Configuration, boot_loader: LinuxBootLoader) void {
+    pub fn setBootLoader(self: Configuration, boot_loader: LinuxBootLoader) void {
         self.obj.msgSend(void, objc.sel("setBootLoader:"), .{boot_loader.obj});
     }
 
-    pub fn setEFIBootLoader(self: *Configuration, boot_loader: EFIBootLoader) void {
+    pub fn setEFIBootLoader(self: Configuration, boot_loader: EFIBootLoader) void {
         self.obj.msgSend(void, objc.sel("setBootLoader:"), .{boot_loader.obj});
     }
 
-    pub fn setPlatform(self: *Configuration, platform: GenericPlatformConfiguration) void {
+    pub fn setPlatform(self: Configuration, platform: GenericPlatformConfiguration) void {
         self.obj.msgSend(void, objc.sel("setPlatform:"), .{platform.obj});
     }
 
-    pub fn addUSBStorage(self: *Configuration, storage: USBStorage) void {
+    pub fn addUSBStorage(self: Configuration, storage: USBStorage) void {
         const NSMutableArray = objc.getClass("NSMutableArray") orelse return;
         const current_devices = self.obj.msgSend(objc.Object, objc.sel("storageDevices"), .{});
         const new_array = NSMutableArray.msgSend(objc.Object, objc.sel("arrayWithArray:"), .{current_devices});
@@ -60,7 +60,7 @@ pub const Configuration = struct {
         self.obj.msgSend(void, objc.sel("setStorageDevices:"), .{new_array});
     }
 
-    pub fn addStorageDevice(self: *Configuration, storage: Storage) void {
+    pub fn addStorageDevice(self: Configuration, storage: Storage) void {
         const NSMutableArray = objc.getClass("NSMutableArray") orelse return;
         const current_devices = self.obj.msgSend(objc.Object, objc.sel("storageDevices"), .{});
         const new_array = NSMutableArray.msgSend(objc.Object, objc.sel("arrayWithArray:"), .{current_devices});
@@ -68,7 +68,7 @@ pub const Configuration = struct {
         self.obj.msgSend(void, objc.sel("setStorageDevices:"), .{new_array});
     }
 
-    pub fn addNetworkDevice(self: *Configuration, network: Network) void {
+    pub fn addNetworkDevice(self: Configuration, network: Network) void {
         const NSMutableArray = objc.getClass("NSMutableArray") orelse return;
         const current_devices = self.obj.msgSend(objc.Object, objc.sel("networkDevices"), .{});
         const new_array = NSMutableArray.msgSend(objc.Object, objc.sel("arrayWithArray:"), .{current_devices});
@@ -76,7 +76,7 @@ pub const Configuration = struct {
         self.obj.msgSend(void, objc.sel("setNetworkDevices:"), .{new_array});
     }
 
-    pub fn addSerialConsole(self: *Configuration) void {
+    pub fn addSerialConsole(self: Configuration) void {
         const VZSerialPort = objc.getClass("VZVirtioConsoleDeviceSerialPortConfiguration") orelse return;
         const VZFileHandleAttachment = objc.getClass("VZFileHandleSerialPortAttachment") orelse return;
         const NSFileHandle = objc.getClass("NSFileHandle") orelse return;
@@ -96,7 +96,7 @@ pub const Configuration = struct {
         self.obj.msgSend(void, objc.sel("setSerialPorts:"), .{ports_array});
     }
 
-    pub fn addEntropy(self: *Configuration) void {
+    pub fn addEntropy(self: Configuration) void {
         const VZEntropy = objc.getClass("VZVirtioEntropyDeviceConfiguration") orelse return;
         const NSArray = objc.getClass("NSArray") orelse return;
 
@@ -106,7 +106,7 @@ pub const Configuration = struct {
         self.obj.msgSend(void, objc.sel("setEntropyDevices:"), .{entropy_array});
     }
 
-    pub fn addMemoryBalloon(self: *Configuration) void {
+    pub fn addMemoryBalloon(self: Configuration) void {
         const VZBalloon = objc.getClass("VZVirtioTraditionalMemoryBalloonDeviceConfiguration") orelse return;
         const NSArray = objc.getClass("NSArray") orelse return;
 
@@ -116,7 +116,7 @@ pub const Configuration = struct {
         self.obj.msgSend(void, objc.sel("setMemoryBalloonDevices:"), .{balloon_array});
     }
 
-    pub fn addSocketDevice(self: *Configuration, socket: VirtioSocket) void {
+    pub fn addSocketDevice(self: Configuration, socket: VirtioSocket) void {
         const NSMutableArray = objc.getClass("NSMutableArray") orelse return;
         const current_devices = self.obj.msgSend(objc.Object, objc.sel("socketDevices"), .{});
         const new_array = NSMutableArray.msgSend(objc.Object, objc.sel("arrayWithArray:"), .{current_devices});
@@ -124,7 +124,7 @@ pub const Configuration = struct {
         self.obj.msgSend(void, objc.sel("setSocketDevices:"), .{new_array});
     }
 
-    pub fn addAudioDevice(self: *Configuration, sound: VirtioSound) void {
+    pub fn addAudioDevice(self: Configuration, sound: VirtioSound) void {
         const NSMutableArray = objc.getClass("NSMutableArray") orelse return;
         const current_devices = self.obj.msgSend(objc.Object, objc.sel("audioDevices"), .{});
         const new_array = NSMutableArray.msgSend(objc.Object, objc.sel("arrayWithArray:"), .{current_devices});
@@ -132,7 +132,7 @@ pub const Configuration = struct {
         self.obj.msgSend(void, objc.sel("setAudioDevices:"), .{new_array});
     }
 
-    pub fn addDirectoryShare(self: *Configuration, share: SharedDirectory) void {
+    pub fn addDirectoryShare(self: Configuration, share: SharedDirectory) void {
         const NSMutableArray = objc.getClass("NSMutableArray") orelse return;
         const current_devices = self.obj.msgSend(objc.Object, objc.sel("directorySharingDevices"), .{});
         const new_array = NSMutableArray.msgSend(objc.Object, objc.sel("arrayWithArray:"), .{current_devices});
@@ -140,7 +140,7 @@ pub const Configuration = struct {
         self.obj.msgSend(void, objc.sel("setDirectorySharingDevices:"), .{new_array});
     }
 
-    pub fn addRosettaShare(self: *Configuration, share: RosettaShare) void {
+    pub fn addRosettaShare(self: Configuration, share: RosettaShare) void {
         const NSMutableArray = objc.getClass("NSMutableArray") orelse return;
         const current_devices = self.obj.msgSend(objc.Object, objc.sel("directorySharingDevices"), .{});
         const new_array = NSMutableArray.msgSend(objc.Object, objc.sel("arrayWithArray:"), .{current_devices});
@@ -148,7 +148,7 @@ pub const Configuration = struct {
         self.obj.msgSend(void, objc.sel("setDirectorySharingDevices:"), .{new_array});
     }
 
-    pub fn addGraphicsDevice(self: *Configuration, graphics: VirtioGraphicsDevice) void {
+    pub fn addGraphicsDevice(self: Configuration, graphics: VirtioGraphicsDevice) void {
         const NSMutableArray = objc.getClass("NSMutableArray") orelse return;
         const current_devices = self.obj.msgSend(objc.Object, objc.sel("graphicsDevices"), .{});
         const new_array = NSMutableArray.msgSend(objc.Object, objc.sel("arrayWithArray:"), .{current_devices});
@@ -156,7 +156,7 @@ pub const Configuration = struct {
         self.obj.msgSend(void, objc.sel("setGraphicsDevices:"), .{new_array});
     }
 
-    pub fn addKeyboard(self: *Configuration) void {
+    pub fn addKeyboard(self: Configuration) void {
         const VZUSBKeyboard = objc.getClass("VZUSBKeyboardConfiguration") orelse return;
         const NSArray = objc.getClass("NSArray") orelse return;
 
@@ -166,7 +166,7 @@ pub const Configuration = struct {
         self.obj.msgSend(void, objc.sel("setKeyboards:"), .{keyboards_array});
     }
 
-    pub fn addPointingDevice(self: *Configuration) void {
+    pub fn addPointingDevice(self: Configuration) void {
         const VZUSBPointing = objc.getClass("VZUSBScreenCoordinatePointingDeviceConfiguration") orelse return;
         const NSArray = objc.getClass("NSArray") orelse return;
 
@@ -176,7 +176,7 @@ pub const Configuration = struct {
         self.obj.msgSend(void, objc.sel("setPointingDevices:"), .{pointing_array});
     }
 
-    pub fn addVirtioKeyboard(self: *Configuration) void {
+    pub fn addVirtioKeyboard(self: Configuration) void {
         const VZVirtioKeyboard = objc.getClass("VZVirtioKeyboardConfiguration") orelse return;
         const NSArray = objc.getClass("NSArray") orelse return;
 
@@ -186,7 +186,7 @@ pub const Configuration = struct {
         self.obj.msgSend(void, objc.sel("setKeyboards:"), .{keyboards_array});
     }
 
-    pub fn addVirtioPointingDevice(self: *Configuration) void {
+    pub fn addVirtioPointingDevice(self: Configuration) void {
         const VZVirtioPointing = objc.getClass("VZVirtioPointingDeviceConfiguration") orelse return;
         const NSArray = objc.getClass("NSArray") orelse return;
 
@@ -196,7 +196,7 @@ pub const Configuration = struct {
         self.obj.msgSend(void, objc.sel("setPointingDevices:"), .{pointing_array});
     }
 
-    pub fn addUSBController(self: *Configuration) void {
+    pub fn addUSBController(self: Configuration) void {
         const VZXHCIController = objc.getClass("VZXHCIControllerConfiguration") orelse return;
         const NSArray = objc.getClass("NSArray") orelse return;
 
@@ -206,7 +206,7 @@ pub const Configuration = struct {
         self.obj.msgSend(void, objc.sel("setUsbControllers:"), .{controller_array});
     }
 
-    pub fn validate(self: *Configuration) bool {
+    pub fn validate(self: Configuration) bool {
         var error_ptr: objc.c.id = null;
         const valid = self.obj.msgSend(bool, objc.sel("validateWithError:"), .{&error_ptr});
         if (!valid) {
@@ -495,7 +495,7 @@ pub const RosettaShare = struct {
         return .{ .obj = fs_device };
     }
 
-    pub fn deinit(self: *RosettaShare) void {
+    pub fn deinit(self: RosettaShare) void {
         self.obj.release();
     }
 };
@@ -523,7 +523,7 @@ pub const VirtioGraphicsDevice = struct {
         return .{ .obj = graphics_device };
     }
 
-    pub fn deinit(self: *VirtioGraphicsDevice) void {
+    pub fn deinit(self: VirtioGraphicsDevice) void {
         self.obj.release();
     }
 };
@@ -540,7 +540,7 @@ pub const VirtioSocket = struct {
         return .{ .obj = socket_device };
     }
 
-    pub fn deinit(self: *VirtioSocket) void {
+    pub fn deinit(self: VirtioSocket) void {
         self.obj.release();
     }
 };
@@ -573,7 +573,7 @@ pub const VirtioSound = struct {
         return .{ .obj = sound_device };
     }
 
-    pub fn deinit(self: *VirtioSound) void {
+    pub fn deinit(self: VirtioSound) void {
         self.obj.release();
     }
 };
@@ -599,7 +599,7 @@ pub const Network = struct {
         return .{ .obj = network_device };
     }
 
-    pub fn deinit(self: *Network) void {
+    pub fn deinit(self: Network) void {
         self.obj.release();
     }
 };
@@ -617,34 +617,23 @@ pub const VMState = enum(c_long) {
     restoring = 9,
 };
 
-pub const StartResult = enum {
+pub const StartResult = enum(u8) {
     success,
     failed,
     pending,
 };
 
-var g_vm_start_result: StartResult = .pending;
-var g_vm_stop_result: StartResult = .pending;
+const CompletionContext = struct {
+    result: *std.atomic.Value(StartResult),
+};
 
-const StartBlock = objc.Block(struct {
-    dummy: u8 = 0,
-}, .{?*anyopaque}, void);
+const StartBlock = objc.Block(CompletionContext, .{?*anyopaque}, void);
 
-fn startCompletionHandler(ctx: *const StartBlock.Context, err: ?*anyopaque) callconv(.c) void {
-    _ = ctx;
+fn completionHandler(ctx: *const StartBlock.Context, err: ?*anyopaque) callconv(.c) void {
     if (err != null) {
-        g_vm_start_result = .failed;
+        ctx.result.store(.failed, .release);
     } else {
-        g_vm_start_result = .success;
-    }
-}
-
-fn stopCompletionHandler(ctx: *const StartBlock.Context, err: ?*anyopaque) callconv(.c) void {
-    _ = ctx;
-    if (err != null) {
-        g_vm_stop_result = .failed;
-    } else {
-        g_vm_stop_result = .success;
+        ctx.result.store(.success, .release);
     }
 }
 
@@ -660,7 +649,7 @@ pub const VirtualMachine = struct {
         return .{ .obj = obj };
     }
 
-    pub fn deinit(self: *VirtualMachine) void {
+    pub fn deinit(self: VirtualMachine) void {
         self.obj.release();
     }
 
@@ -682,17 +671,17 @@ pub const VirtualMachine = struct {
     }
 
     pub fn start(self: *VirtualMachine) StartResult {
-        g_vm_start_result = .pending;
+        var result = std.atomic.Value(StartResult).init(.pending);
 
-        var block = StartBlock.init(.{}, &startCompletionHandler);
+        var block = StartBlock.init(.{ .result = &result }, &completionHandler);
         self.obj.msgSend(void, objc.sel("startWithCompletionHandler:"), .{&block});
 
         var run_loop = RunLoop.current() orelse return .failed;
-        while (g_vm_start_result == .pending) {
+        while (result.load(.acquire) == .pending) {
             run_loop.runOnce();
         }
 
-        return g_vm_start_result;
+        return result.load(.acquire);
     }
 
     pub fn requestStop(self: *VirtualMachine) bool {
@@ -700,17 +689,17 @@ pub const VirtualMachine = struct {
     }
 
     pub fn stop(self: *VirtualMachine) StartResult {
-        g_vm_stop_result = .pending;
+        var result = std.atomic.Value(StartResult).init(.pending);
 
-        var block = StartBlock.init(.{}, &stopCompletionHandler);
+        var block = StartBlock.init(.{ .result = &result }, &completionHandler);
         self.obj.msgSend(void, objc.sel("stopWithCompletionHandler:"), .{&block});
 
         var run_loop = RunLoop.current() orelse return .failed;
-        while (g_vm_stop_result == .pending) {
+        while (result.load(.acquire) == .pending) {
             run_loop.runOnce();
         }
 
-        return g_vm_stop_result;
+        return result.load(.acquire);
     }
 };
 
