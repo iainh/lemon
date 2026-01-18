@@ -7,9 +7,11 @@ pub const ShareConfig = struct {
 
 pub const VMConfig = struct {
     name: []const u8,
-    kernel: []const u8,
+    kernel: ?[]const u8 = null,
     initrd: ?[]const u8 = null,
     disk: ?[]const u8 = null,
+    nvram: ?[]const u8 = null,
+    efi: bool = false,
     cmdline: []const u8 = "console=hvc0",
     cpus: u32 = 2,
     memory_mb: u64 = 512,
@@ -70,10 +72,13 @@ pub fn saveConfig(allocator: std.mem.Allocator, config: ConfigFile) !void {
     const config_path = try getConfigPath(allocator);
     defer allocator.free(config_path);
 
+    const json_data = std.json.Stringify.valueAlloc(allocator, config, .{ .whitespace = .indent_2 }) catch return ConfigError.OutOfMemory;
+    defer allocator.free(json_data);
+
     const file = std.fs.cwd().createFile(config_path, .{}) catch return ConfigError.InvalidPath;
     defer file.close();
 
-    std.json.stringify(config, .{ .whitespace = .indent_2 }, file.writer()) catch return ConfigError.ParseError;
+    file.writeAll(json_data) catch return ConfigError.ParseError;
 }
 
 pub fn findVM(config: ConfigFile, name: []const u8) ?VMConfig {
@@ -83,6 +88,48 @@ pub fn findVM(config: ConfigFile, name: []const u8) ?VMConfig {
         }
     }
     return null;
+}
+
+pub fn addVM(allocator: std.mem.Allocator, new_vm: VMConfig) !void {
+    const existing = loadConfig(allocator) catch ConfigFile{ .vms = &[_]VMConfig{} };
+
+    for (existing.vms) |vm| {
+        if (std.mem.eql(u8, vm.name, new_vm.name)) {
+            return ConfigError.ParseError;
+        }
+    }
+
+    var new_vms = try allocator.alloc(VMConfig, existing.vms.len + 1);
+    @memcpy(new_vms[0..existing.vms.len], existing.vms);
+    new_vms[existing.vms.len] = new_vm;
+
+    try saveConfig(allocator, ConfigFile{ .vms = new_vms });
+}
+
+pub fn removeVM(allocator: std.mem.Allocator, name: []const u8) !bool {
+    const existing = try loadConfig(allocator);
+
+    var found = false;
+    for (existing.vms) |vm| {
+        if (std.mem.eql(u8, vm.name, name)) {
+            found = true;
+            break;
+        }
+    }
+
+    if (!found) return false;
+
+    var new_vms = try allocator.alloc(VMConfig, existing.vms.len - 1);
+    var idx: usize = 0;
+    for (existing.vms) |vm| {
+        if (!std.mem.eql(u8, vm.name, name)) {
+            new_vms[idx] = vm;
+            idx += 1;
+        }
+    }
+
+    try saveConfig(allocator, ConfigFile{ .vms = new_vms });
+    return true;
 }
 
 pub fn printVMList(config: ConfigFile) void {
@@ -95,21 +142,34 @@ pub fn printVMList(config: ConfigFile) void {
     std.debug.print("Configured VMs:\n", .{});
     for (config.vms) |vm| {
         std.debug.print("  {s}\n", .{vm.name});
-        std.debug.print("    kernel: {s}\n", .{vm.kernel});
+        if (vm.efi) {
+            std.debug.print("    boot: EFI\n", .{});
+        } else if (vm.kernel) |k| {
+            std.debug.print("    kernel: {s}\n", .{k});
+        }
         std.debug.print("    cpus: {d}, memory: {d} MB\n", .{ vm.cpus, vm.memory_mb });
     }
 }
 
 pub fn printVMDetails(vm: VMConfig) void {
     std.debug.print("VM: {s}\n", .{vm.name});
-    std.debug.print("  Kernel:  {s}\n", .{vm.kernel});
+    if (vm.efi) {
+        std.debug.print("  Boot:    EFI\n", .{});
+    } else if (vm.kernel) |k| {
+        std.debug.print("  Kernel:  {s}\n", .{k});
+    }
     if (vm.initrd) |initrd| {
         std.debug.print("  Initrd:  {s}\n", .{initrd});
     }
     if (vm.disk) |disk| {
         std.debug.print("  Disk:    {s}\n", .{disk});
     }
-    std.debug.print("  Cmdline: {s}\n", .{vm.cmdline});
+    if (vm.nvram) |nvram| {
+        std.debug.print("  NVRAM:   {s}\n", .{nvram});
+    }
+    if (!vm.efi) {
+        std.debug.print("  Cmdline: {s}\n", .{vm.cmdline});
+    }
     std.debug.print("  CPUs:    {d}\n", .{vm.cpus});
     std.debug.print("  Memory:  {d} MB\n", .{vm.memory_mb});
     std.debug.print("  Rosetta: {}\n", .{vm.rosetta});

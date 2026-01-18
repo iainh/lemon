@@ -32,6 +32,8 @@ pub fn main() void {
 
     switch (cmd) {
         .run => |opts| runVM(allocator, opts),
+        .create => |opts| createVM(allocator, opts),
+        .delete => |opts| deleteVM(allocator, opts.name),
         .create_disk => |opts| {
             disk.createRawDisk(opts.path, opts.size_mb) catch |err| {
                 switch (err) {
@@ -74,6 +76,44 @@ fn inspectVM(allocator: std.mem.Allocator, name: [:0]const u8) void {
     }
 }
 
+fn createVM(allocator: std.mem.Allocator, opts: cli.CreateVMOptions) void {
+    const vm_config = config.VMConfig{
+        .name = opts.name,
+        .kernel = opts.kernel,
+        .initrd = opts.initrd,
+        .disk = opts.disk,
+        .nvram = opts.nvram,
+        .efi = opts.efi,
+        .cmdline = opts.cmdline,
+        .cpus = opts.cpus,
+        .memory_mb = opts.memory_mb,
+        .rosetta = opts.rosetta,
+    };
+
+    config.addVM(allocator, vm_config) catch |err| {
+        switch (err) {
+            config.ConfigError.ParseError => std.debug.print("Error: VM '{s}' already exists.\n", .{opts.name}),
+            else => std.debug.print("Error: Failed to save VM configuration.\n", .{}),
+        }
+        return;
+    };
+
+    std.debug.print("Created VM '{s}'\n", .{opts.name});
+}
+
+fn deleteVM(allocator: std.mem.Allocator, name: [:0]const u8) void {
+    const removed = config.removeVM(allocator, name) catch {
+        std.debug.print("Error: Failed to delete VM.\n", .{});
+        return;
+    };
+
+    if (removed) {
+        std.debug.print("Deleted VM '{s}'\n", .{name});
+    } else {
+        std.debug.print("Error: VM '{s}' not found.\n", .{name});
+    }
+}
+
 fn runVM(allocator: std.mem.Allocator, opts: cli.RunOptions) void {
     if (!vz.isSupported()) {
         std.debug.print("Error: Virtualization is not supported on this system.\n", .{});
@@ -84,7 +124,8 @@ fn runVM(allocator: std.mem.Allocator, opts: cli.RunOptions) void {
     var initrd: ?[:0]const u8 = opts.initrd;
     var disk_path: ?[:0]const u8 = opts.disk;
     const iso_path: ?[:0]const u8 = opts.iso;
-    const nvram_path: ?[:0]const u8 = opts.nvram;
+    var nvram_path: ?[:0]const u8 = opts.nvram;
+    var efi_boot: bool = opts.efi;
     var cmdline: [:0]const u8 = opts.cmdline;
     var cpus: u32 = opts.cpus;
     var memory_mb: u64 = opts.memory_mb;
@@ -94,7 +135,7 @@ fn runVM(allocator: std.mem.Allocator, opts: cli.RunOptions) void {
     const gui = opts.gui;
     const width = opts.width;
     const height = opts.height;
-    const usb_input = opts.usb_input;
+
     const vsock = opts.vsock;
     const audio = opts.audio;
 
@@ -104,9 +145,11 @@ fn runVM(allocator: std.mem.Allocator, opts: cli.RunOptions) void {
             return;
         };
         if (config.findVM(cfg, name)) |vm| {
-            kernel = allocator.dupeZ(u8, vm.kernel) catch null;
+            if (vm.kernel) |k| kernel = allocator.dupeZ(u8, k) catch null;
             if (vm.initrd) |i| initrd = allocator.dupeZ(u8, i) catch null;
             if (vm.disk) |d| disk_path = allocator.dupeZ(u8, d) catch null;
+            if (vm.nvram) |n| nvram_path = allocator.dupeZ(u8, n) catch null;
+            efi_boot = vm.efi;
             cmdline = allocator.dupeZ(u8, vm.cmdline) catch cmdline;
             cpus = vm.cpus;
             memory_mb = vm.memory_mb;
@@ -118,10 +161,10 @@ fn runVM(allocator: std.mem.Allocator, opts: cli.RunOptions) void {
         }
     }
 
-    const is_efi_boot = iso_path != null;
+    const is_efi_boot = iso_path != null or efi_boot;
 
     if (!is_efi_boot and kernel == null) {
-        std.debug.print("Error: No kernel or ISO specified.\n", .{});
+        std.debug.print("Error: No kernel, --efi, or --iso specified.\n", .{});
         return;
     }
 
@@ -131,8 +174,12 @@ fn runVM(allocator: std.mem.Allocator, opts: cli.RunOptions) void {
 
     std.debug.print("🍋 Lemon - Starting VM\n", .{});
     if (is_efi_boot) {
-        std.debug.print("  Boot mode: EFI (ISO)\n", .{});
-        std.debug.print("  ISO: {s}\n", .{iso_path.?});
+        if (iso_path) |iso| {
+            std.debug.print("  Boot mode: EFI (ISO)\n", .{});
+            std.debug.print("  ISO: {s}\n", .{iso});
+        } else {
+            std.debug.print("  Boot mode: EFI (disk)\n", .{});
+        }
         if (nvram_path) |n| {
             std.debug.print("  NVRAM: {s}\n", .{n});
         }
@@ -192,7 +239,7 @@ fn runVM(allocator: std.mem.Allocator, opts: cli.RunOptions) void {
             std.debug.print("  Loaded NVRAM: {s}\n", .{actual_nvram_path});
         }
 
-        const efi_boot = vz.EFIBootLoader.init(store) orelse {
+        const efi_boot_loader = vz.EFIBootLoader.init(store) orelse {
             std.debug.print("Error: Failed to create EFI boot loader.\n", .{});
             return;
         };
@@ -203,14 +250,16 @@ fn runVM(allocator: std.mem.Allocator, opts: cli.RunOptions) void {
             return;
         };
 
-        vz_config.setEFIBootLoader(efi_boot);
+        vz_config.setEFIBootLoader(efi_boot_loader);
         vz_config.setPlatform(platform);
 
-        const iso_storage = vz.USBStorage.initWithISO(iso_path.?) orelse {
-            std.debug.print("Error: Failed to attach ISO: {s}\n", .{iso_path.?});
-            return;
-        };
-        vz_config.addUSBStorage(iso_storage);
+        if (iso_path) |iso| {
+            const iso_storage = vz.USBStorage.initWithISO(iso) orelse {
+                std.debug.print("Error: Failed to attach ISO: {s}\n", .{iso});
+                return;
+            };
+            vz_config.addUSBStorage(iso_storage);
+        }
     } else {
         const boot_loader = vz.LinuxBootLoader.init(kernel.?, initrd, cmdline) orelse {
             std.debug.print("Error: Failed to create boot loader. Check kernel path.\n", .{});
@@ -286,14 +335,9 @@ fn runVM(allocator: std.mem.Allocator, opts: cli.RunOptions) void {
             return;
         };
         vz_config.addGraphicsDevice(graphics);
-        if (usb_input) {
-            vz_config.addKeyboard();
-            vz_config.addPointingDevice();
-            std.debug.print("  Input: USB\n", .{});
-        } else {
-            vz_config.addVirtioKeyboard();
-            vz_config.addVirtioPointingDevice();
-        }
+        vz_config.addKeyboard();
+        vz_config.addPointingDevice();
+        std.debug.print("  Input: USB\n", .{});
         std.debug.print("  Graphics: {d}x{d}\n", .{ width, height });
     }
 

@@ -207,7 +207,19 @@ pub const Configuration = struct {
     }
 
     pub fn validate(self: *Configuration) bool {
-        return self.obj.msgSend(bool, objc.sel("validateWithError:"), .{@as(?*anyopaque, null)});
+        var error_ptr: objc.c.id = null;
+        const valid = self.obj.msgSend(bool, objc.sel("validateWithError:"), .{&error_ptr});
+        if (!valid) {
+            if (error_ptr) |err_raw| {
+                const err = objc.Object{ .value = err_raw };
+                const desc = err.msgSend(objc.Object, objc.sel("localizedDescription"), .{});
+                const cstr = desc.msgSend([*:0]const u8, objc.sel("UTF8String"), .{});
+                std.debug.print("Validation error: {s}\n", .{cstr});
+            } else {
+                std.debug.print("Validation failed (no error details)\n", .{});
+            }
+        }
+        return valid;
     }
 };
 
