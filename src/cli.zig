@@ -32,6 +32,9 @@ pub const RunOptions = struct {
     share_count: u8 = 0,
     rosetta: bool = false,
     vm_name: ?[:0]const u8 = null,
+    gui: bool = false,
+    width: u32 = 1280,
+    height: u32 = 720,
 };
 
 pub const CreateDiskOptions = struct {
@@ -105,6 +108,14 @@ fn parseRunCommand(allocator: std.mem.Allocator, args: *std.process.ArgIterator)
             }
         } else if (std.mem.eql(u8, arg, "--rosetta")) {
             opts.rosetta = true;
+        } else if (std.mem.eql(u8, arg, "--gui")) {
+            opts.gui = true;
+        } else if (std.mem.eql(u8, arg, "--width")) {
+            const val = args.next() orelse return ParseError.MissingRequiredArg;
+            opts.width = std.fmt.parseInt(u32, val, 10) catch return ParseError.InvalidValue;
+        } else if (std.mem.eql(u8, arg, "--height")) {
+            const val = args.next() orelse return ParseError.MissingRequiredArg;
+            opts.height = std.fmt.parseInt(u32, val, 10) catch return ParseError.InvalidValue;
         } else if (!std.mem.startsWith(u8, arg, "-") and opts.vm_name == null and opts.kernel == null) {
             opts.vm_name = allocator.dupeZ(u8, arg) catch return ParseError.OutOfMemory;
         }
@@ -157,6 +168,9 @@ pub fn printHelp() void {
         \\    -m, --memory <MB>       Memory in MB (default: 512)
         \\    -s, --share <PATH:TAG>  Share host directory (mount with: mount -t virtiofs TAG /mnt)
         \\        --rosetta           Enable Rosetta x86_64 emulation (Apple Silicon only)
+        \\        --gui               Show graphical display window
+        \\        --width <N>         Display width in pixels (default: 1280)
+        \\        --height <N>        Display height in pixels (default: 720)
         \\
         \\CREATE-DISK:
         \\    lemon create-disk <PATH> <SIZE_MB>

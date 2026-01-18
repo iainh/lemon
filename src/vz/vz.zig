@@ -4,6 +4,14 @@ const objc = @import("objc");
 pub const runloop = @import("runloop.zig");
 pub const RunLoop = runloop.RunLoop;
 
+pub const appkit = @import("appkit.zig");
+pub const NSApplication = appkit.NSApplication;
+pub const NSWindow = appkit.NSWindow;
+pub const NSRect = appkit.NSRect;
+pub const NSPoint = appkit.NSPoint;
+pub const NSSize = appkit.NSSize;
+pub const VirtualMachineView = appkit.VirtualMachineView;
+
 pub const VZError = error{
     ClassNotFound,
     AllocationFailed,
@@ -112,6 +120,34 @@ pub const Configuration = struct {
         const new_array = NSMutableArray.msgSend(objc.Object, objc.sel("arrayWithArray:"), .{current_devices});
         new_array.msgSend(void, objc.sel("addObject:"), .{share.obj});
         self.obj.msgSend(void, objc.sel("setDirectorySharingDevices:"), .{new_array});
+    }
+
+    pub fn addGraphicsDevice(self: *Configuration, graphics: VirtioGraphicsDevice) void {
+        const NSMutableArray = objc.getClass("NSMutableArray") orelse return;
+        const current_devices = self.obj.msgSend(objc.Object, objc.sel("graphicsDevices"), .{});
+        const new_array = NSMutableArray.msgSend(objc.Object, objc.sel("arrayWithArray:"), .{current_devices});
+        new_array.msgSend(void, objc.sel("addObject:"), .{graphics.obj});
+        self.obj.msgSend(void, objc.sel("setGraphicsDevices:"), .{new_array});
+    }
+
+    pub fn addKeyboard(self: *Configuration) void {
+        const VZUSBKeyboard = objc.getClass("VZUSBKeyboardConfiguration") orelse return;
+        const NSArray = objc.getClass("NSArray") orelse return;
+
+        const keyboard = VZUSBKeyboard.msgSend(objc.Object, objc.sel("alloc"), .{})
+            .msgSend(objc.Object, objc.sel("init"), .{});
+        const keyboards_array = NSArray.msgSend(objc.Object, objc.sel("arrayWithObject:"), .{keyboard});
+        self.obj.msgSend(void, objc.sel("setKeyboards:"), .{keyboards_array});
+    }
+
+    pub fn addPointingDevice(self: *Configuration) void {
+        const VZUSBPointing = objc.getClass("VZUSBScreenCoordinatePointingDeviceConfiguration") orelse return;
+        const NSArray = objc.getClass("NSArray") orelse return;
+
+        const pointing = VZUSBPointing.msgSend(objc.Object, objc.sel("alloc"), .{})
+            .msgSend(objc.Object, objc.sel("init"), .{});
+        const pointing_array = NSArray.msgSend(objc.Object, objc.sel("arrayWithObject:"), .{pointing});
+        self.obj.msgSend(void, objc.sel("setPointingDevices:"), .{pointing_array});
     }
 
     pub fn validate(self: *Configuration) bool {
@@ -392,6 +428,34 @@ pub const RosettaShare = struct {
     }
 
     pub fn deinit(self: *RosettaShare) void {
+        self.obj.release();
+    }
+};
+
+pub const VirtioGraphicsDevice = struct {
+    obj: objc.Object,
+
+    pub fn init(width: u32, height: u32) ?VirtioGraphicsDevice {
+        const VZVirtioGraphicsDeviceConfiguration = objc.getClass("VZVirtioGraphicsDeviceConfiguration") orelse return null;
+        const VZVirtioGraphicsScanoutConfiguration = objc.getClass("VZVirtioGraphicsScanoutConfiguration") orelse return null;
+        const NSArray = objc.getClass("NSArray") orelse return null;
+
+        const scanout = VZVirtioGraphicsScanoutConfiguration.msgSend(objc.Object, objc.sel("alloc"), .{})
+            .msgSend(objc.Object, objc.sel("initWithWidthInPixels:heightInPixels:"), .{
+            @as(c_long, width),
+            @as(c_long, height),
+        });
+
+        const scanouts_array = NSArray.msgSend(objc.Object, objc.sel("arrayWithObject:"), .{scanout});
+
+        const graphics_device = VZVirtioGraphicsDeviceConfiguration.msgSend(objc.Object, objc.sel("alloc"), .{})
+            .msgSend(objc.Object, objc.sel("init"), .{});
+        graphics_device.msgSend(void, objc.sel("setScanouts:"), .{scanouts_array});
+
+        return .{ .obj = graphics_device };
+    }
+
+    pub fn deinit(self: *VirtioGraphicsDevice) void {
         self.obj.release();
     }
 };

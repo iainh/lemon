@@ -91,6 +91,9 @@ fn runVM(allocator: std.mem.Allocator, opts: cli.RunOptions) void {
     var rosetta: bool = opts.rosetta;
     const shares = opts.shares;
     const share_count = opts.share_count;
+    const gui = opts.gui;
+    const width = opts.width;
+    const height = opts.height;
 
     if (opts.vm_name) |name| {
         const cfg = config.loadConfig(allocator) catch {
@@ -255,6 +258,17 @@ fn runVM(allocator: std.mem.Allocator, opts: cli.RunOptions) void {
         }
     }
 
+    if (gui) {
+        const graphics = vz.VirtioGraphicsDevice.init(width, height) orelse {
+            std.debug.print("Error: Failed to create graphics device.\n", .{});
+            return;
+        };
+        vz_config.addGraphicsDevice(graphics);
+        vz_config.addKeyboard();
+        vz_config.addPointingDevice();
+        std.debug.print("  Graphics: {d}x{d}\n", .{ width, height });
+    }
+
     if (!vz_config.validate()) {
         std.debug.print("Error: Invalid VM configuration.\n", .{});
         return;
@@ -284,29 +298,60 @@ fn runVM(allocator: std.mem.Allocator, opts: cli.RunOptions) void {
 
     std.debug.print("VM running. Press Ctrl+C to stop.\n", .{});
 
-    var run_loop = vz.RunLoop.current() orelse {
-        std.debug.print("Error: Failed to get run loop.\n", .{});
-        return;
-    };
+    if (gui) {
+        var app = vz.NSApplication.sharedApplication() orelse {
+            std.debug.print("Error: Failed to get NSApplication.\n", .{});
+            return;
+        };
+        _ = app.setActivationPolicy(0);
 
-    while (!sig.isShutdownRequested()) {
-        const state = vm.state();
-        if (state == .stopped or state == .@"error") {
-            std.debug.print("\nVM stopped. State: {s}\n", .{@tagName(state)});
-            break;
-        }
-        run_loop.runOnce();
-    }
+        const rect = vz.NSRect{
+            .origin = .{ .x = 100, .y = 100 },
+            .size = .{ .width = @floatFromInt(width), .height = @floatFromInt(height) },
+        };
 
-    if (sig.isShutdownRequested()) {
-        std.debug.print("\nShutdown requested, stopping VM...\n", .{});
-        if (vm.canRequestStop()) {
-            _ = vm.requestStop();
-            while (vm.state() != .stopped and vm.state() != .@"error") {
-                run_loop.runOnce();
+        var window = vz.NSWindow.initWithContentRect(rect, 15, 2, false) orelse {
+            std.debug.print("Error: Failed to create window.\n", .{});
+            return;
+        };
+        window.setTitle("Lemon VM");
+
+        var vm_view = vz.VirtualMachineView.init() orelse {
+            std.debug.print("Error: Failed to create VM view.\n", .{});
+            return;
+        };
+        vm_view.setVirtualMachine(vm.obj);
+
+        window.setContentView(vm_view.obj);
+        window.makeKeyAndOrderFront(null);
+        app.activateIgnoringOtherApps(true);
+
+        app.run();
+    } else {
+        var run_loop = vz.RunLoop.current() orelse {
+            std.debug.print("Error: Failed to get run loop.\n", .{});
+            return;
+        };
+
+        while (!sig.isShutdownRequested()) {
+            const state = vm.state();
+            if (state == .stopped or state == .@"error") {
+                std.debug.print("\nVM stopped. State: {s}\n", .{@tagName(state)});
+                break;
             }
+            run_loop.runOnce();
         }
-        std.debug.print("VM stopped.\n", .{});
+
+        if (sig.isShutdownRequested()) {
+            std.debug.print("\nShutdown requested, stopping VM...\n", .{});
+            if (vm.canRequestStop()) {
+                _ = vm.requestStop();
+                while (vm.state() != .stopped and vm.state() != .@"error") {
+                    run_loop.runOnce();
+                }
+            }
+            std.debug.print("VM stopped.\n", .{});
+        }
     }
 }
 
