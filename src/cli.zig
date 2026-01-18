@@ -35,7 +35,7 @@ pub const RunOptions = struct {
     gui: bool = false,
     width: u32 = 1280,
     height: u32 = 720,
-    virtio_input: bool = false,
+    usb_input: bool = false,
     vsock: bool = false,
     audio: bool = false,
 };
@@ -119,8 +119,8 @@ fn parseRunCommand(allocator: std.mem.Allocator, args: *std.process.ArgIterator)
         } else if (std.mem.eql(u8, arg, "--height")) {
             const val = args.next() orelse return ParseError.MissingRequiredArg;
             opts.height = std.fmt.parseInt(u32, val, 10) catch return ParseError.InvalidValue;
-        } else if (std.mem.eql(u8, arg, "--virtio-input")) {
-            opts.virtio_input = true;
+        } else if (std.mem.eql(u8, arg, "--usb-input")) {
+            opts.usb_input = true;
         } else if (std.mem.eql(u8, arg, "--vsock")) {
             opts.vsock = true;
         } else if (std.mem.eql(u8, arg, "--audio")) {
@@ -180,7 +180,7 @@ pub fn printHelp() void {
         \\        --gui               Show graphical display window
         \\        --width <N>         Display width in pixels (default: 1280)
         \\        --height <N>        Display height in pixels (default: 720)
-        \\        --virtio-input      Use virtio keyboard/mouse (lower latency for Linux)
+        \\        --usb-input         Use USB keyboard/mouse instead of virtio
         \\        --vsock             Enable virtio socket for host-guest communication
         \\        --audio             Enable virtio sound device
         \\

@@ -94,7 +94,7 @@ fn runVM(allocator: std.mem.Allocator, opts: cli.RunOptions) void {
     const gui = opts.gui;
     const width = opts.width;
     const height = opts.height;
-    const virtio_input = opts.virtio_input;
+    const usb_input = opts.usb_input;
     const vsock = opts.vsock;
     const audio = opts.audio;
 
@@ -286,13 +286,13 @@ fn runVM(allocator: std.mem.Allocator, opts: cli.RunOptions) void {
             return;
         };
         vz_config.addGraphicsDevice(graphics);
-        if (virtio_input) {
-            vz_config.addVirtioKeyboard();
-            vz_config.addVirtioPointingDevice();
-            std.debug.print("  Input: virtio\n", .{});
-        } else {
+        if (usb_input) {
             vz_config.addKeyboard();
             vz_config.addPointingDevice();
+            std.debug.print("  Input: USB\n", .{});
+        } else {
+            vz_config.addVirtioKeyboard();
+            vz_config.addVirtioPointingDevice();
         }
         std.debug.print("  Graphics: {d}x{d}\n", .{ width, height });
     }
