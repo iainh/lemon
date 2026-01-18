@@ -326,7 +326,25 @@ fn runVM(allocator: std.mem.Allocator, opts: cli.RunOptions) void {
         window.makeKeyAndOrderFront(null);
         app.activateIgnoringOtherApps(true);
 
-        app.run();
+        while (!sig.isShutdownRequested()) {
+            const state = vm.state();
+            if (state == .stopped or state == .@"error") {
+                std.debug.print("\nVM stopped. State: {s}\n", .{@tagName(state)});
+                break;
+            }
+            app.runOnce();
+        }
+
+        if (sig.isShutdownRequested()) {
+            std.debug.print("\nShutdown requested, stopping VM...\n", .{});
+            if (vm.canRequestStop()) {
+                _ = vm.requestStop();
+                while (vm.state() != .stopped and vm.state() != .@"error") {
+                    app.runOnce();
+                }
+            }
+            std.debug.print("VM stopped.\n", .{});
+        }
     } else {
         var run_loop = vz.RunLoop.current() orelse {
             std.debug.print("Error: Failed to get run loop.\n", .{});
