@@ -150,6 +150,16 @@ pub const Configuration = struct {
         self.obj.msgSend(void, objc.sel("setPointingDevices:"), .{pointing_array});
     }
 
+    pub fn addUSBController(self: *Configuration) void {
+        const VZXHCIController = objc.getClass("VZXHCIControllerConfiguration") orelse return;
+        const NSArray = objc.getClass("NSArray") orelse return;
+
+        const controller = VZXHCIController.msgSend(objc.Object, objc.sel("alloc"), .{})
+            .msgSend(objc.Object, objc.sel("init"), .{});
+        const controller_array = NSArray.msgSend(objc.Object, objc.sel("arrayWithObject:"), .{controller});
+        self.obj.msgSend(void, objc.sel("setUsbControllers:"), .{controller_array});
+    }
+
     pub fn validate(self: *Configuration) bool {
         return self.obj.msgSend(bool, objc.sel("validateWithError:"), .{@as(?*anyopaque, null)});
     }
