@@ -95,6 +95,7 @@ fn runVM(allocator: std.mem.Allocator, opts: cli.RunOptions) void {
     const width = opts.width;
     const height = opts.height;
     const virtio_input = opts.virtio_input;
+    const vsock = opts.vsock;
 
     if (opts.vm_name) |name| {
         const cfg = config.loadConfig(allocator) catch {
@@ -233,6 +234,15 @@ fn runVM(allocator: std.mem.Allocator, opts: cli.RunOptions) void {
         vz_config.addNetworkDevice(net);
     } else {
         std.debug.print("Warning: Failed to create NAT network device.\n", .{});
+    }
+
+    if (vsock) {
+        if (vz.VirtioSocket.init()) |socket| {
+            vz_config.addSocketDevice(socket);
+            std.debug.print("  Vsock: enabled (guest CID: 3)\n", .{});
+        } else {
+            std.debug.print("Warning: Failed to create vsock device.\n", .{});
+        }
     }
 
     var i: u8 = 0;

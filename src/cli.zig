@@ -36,6 +36,7 @@ pub const RunOptions = struct {
     width: u32 = 1280,
     height: u32 = 720,
     virtio_input: bool = false,
+    vsock: bool = false,
 };
 
 pub const CreateDiskOptions = struct {
@@ -119,6 +120,8 @@ fn parseRunCommand(allocator: std.mem.Allocator, args: *std.process.ArgIterator)
             opts.height = std.fmt.parseInt(u32, val, 10) catch return ParseError.InvalidValue;
         } else if (std.mem.eql(u8, arg, "--virtio-input")) {
             opts.virtio_input = true;
+        } else if (std.mem.eql(u8, arg, "--vsock")) {
+            opts.vsock = true;
         } else if (!std.mem.startsWith(u8, arg, "-") and opts.vm_name == null and opts.kernel == null) {
             opts.vm_name = allocator.dupeZ(u8, arg) catch return ParseError.OutOfMemory;
         }
@@ -175,6 +178,7 @@ pub fn printHelp() void {
         \\        --width <N>         Display width in pixels (default: 1280)
         \\        --height <N>        Display height in pixels (default: 720)
         \\        --virtio-input      Use virtio keyboard/mouse (lower latency for Linux)
+        \\        --vsock             Enable virtio socket for host-guest communication
         \\
         \\CREATE-DISK:
         \\    lemon create-disk <PATH> <SIZE_MB>

@@ -116,6 +116,14 @@ pub const Configuration = struct {
         self.obj.msgSend(void, objc.sel("setMemoryBalloonDevices:"), .{balloon_array});
     }
 
+    pub fn addSocketDevice(self: *Configuration, socket: VirtioSocket) void {
+        const NSMutableArray = objc.getClass("NSMutableArray") orelse return;
+        const current_devices = self.obj.msgSend(objc.Object, objc.sel("socketDevices"), .{});
+        const new_array = NSMutableArray.msgSend(objc.Object, objc.sel("arrayWithArray:"), .{current_devices});
+        new_array.msgSend(void, objc.sel("addObject:"), .{socket.obj});
+        self.obj.msgSend(void, objc.sel("setSocketDevices:"), .{new_array});
+    }
+
     pub fn addDirectoryShare(self: *Configuration, share: SharedDirectory) void {
         const NSMutableArray = objc.getClass("NSMutableArray") orelse return;
         const current_devices = self.obj.msgSend(objc.Object, objc.sel("directorySharingDevices"), .{});
@@ -496,6 +504,23 @@ pub const VirtioGraphicsDevice = struct {
     }
 
     pub fn deinit(self: *VirtioGraphicsDevice) void {
+        self.obj.release();
+    }
+};
+
+pub const VirtioSocket = struct {
+    obj: objc.Object,
+
+    pub fn init() ?VirtioSocket {
+        const VZVirtioSocketDevice = objc.getClass("VZVirtioSocketDeviceConfiguration") orelse return null;
+
+        const socket_device = VZVirtioSocketDevice.msgSend(objc.Object, objc.sel("alloc"), .{})
+            .msgSend(objc.Object, objc.sel("init"), .{});
+
+        return .{ .obj = socket_device };
+    }
+
+    pub fn deinit(self: *VirtioSocket) void {
         self.obj.release();
     }
 };

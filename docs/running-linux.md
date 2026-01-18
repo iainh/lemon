@@ -136,6 +136,26 @@ mkdir /mnt/projects
 mount -t virtiofs projects /mnt/projects
 ```
 
+## Using Virtio Socket (vsock)
+
+Virtio socket provides fast, low-overhead communication between host and guest without network configuration:
+
+```bash
+lemon run --kernel Image --initrd initramfs-virt --vsock --memory 1024 --cpus 2
+```
+
+The guest is assigned CID 3 (host is CID 2). Inside the VM, you can use vsock for:
+
+- Port forwarding
+- File transfer
+- Guest agent communication
+
+Example: Listen on port 9999 in the guest:
+```bash
+# In guest (requires socat with vsock support)
+socat VSOCK-LISTEN:9999,fork -
+```
+
 ## Enabling Rosetta (x86_64 Emulation)
 
 On Apple Silicon, you can run x86_64 Linux binaries using Rosetta:
