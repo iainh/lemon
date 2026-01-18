@@ -106,6 +106,16 @@ pub const Configuration = struct {
         self.obj.msgSend(void, objc.sel("setEntropyDevices:"), .{entropy_array});
     }
 
+    pub fn addMemoryBalloon(self: *Configuration) void {
+        const VZBalloon = objc.getClass("VZVirtioTraditionalMemoryBalloonDeviceConfiguration") orelse return;
+        const NSArray = objc.getClass("NSArray") orelse return;
+
+        const balloon = VZBalloon.msgSend(objc.Object, objc.sel("alloc"), .{})
+            .msgSend(objc.Object, objc.sel("init"), .{});
+        const balloon_array = NSArray.msgSend(objc.Object, objc.sel("arrayWithObject:"), .{balloon});
+        self.obj.msgSend(void, objc.sel("setMemoryBalloonDevices:"), .{balloon_array});
+    }
+
     pub fn addDirectoryShare(self: *Configuration, share: SharedDirectory) void {
         const NSMutableArray = objc.getClass("NSMutableArray") orelse return;
         const current_devices = self.obj.msgSend(objc.Object, objc.sel("directorySharingDevices"), .{});

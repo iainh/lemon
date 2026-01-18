@@ -218,6 +218,7 @@ fn runVM(allocator: std.mem.Allocator, opts: cli.RunOptions) void {
 
     vz_config.addSerialConsole();
     vz_config.addEntropy();
+    vz_config.addMemoryBalloon();
 
     if (disk_path) |dp| {
         const storage = vz.Storage.initDiskImage(dp, false) orelse {
