@@ -18,11 +18,10 @@
       {
         devShells.default = pkgs.mkShell {
           buildInputs = with pkgs; [
-            zigpkgs.master
+            zigpkgs."0.15.2"
             zls
           ] ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [
-            darwin.apple_sdk.frameworks.Virtualization
-            darwin.apple_sdk.frameworks.Foundation
+            apple-sdk_15
           ];
 
           shellHook = ''
@@ -36,19 +35,22 @@
           version = "0.1.0";
           src = ./.;
 
-          nativeBuildInputs = [ pkgs.zigpkgs.master ];
+          nativeBuildInputs = [ pkgs.zigpkgs."0.15.2" ];
           buildInputs = pkgs.lib.optionals pkgs.stdenv.isDarwin [
-            pkgs.darwin.apple_sdk.frameworks.Virtualization
-            pkgs.darwin.apple_sdk.frameworks.Foundation
+            pkgs.apple-sdk_15
           ];
 
           buildPhase = ''
+            export ZIG_GLOBAL_CACHE_DIR=$TMPDIR/zig-cache
+            export ZIG_LOCAL_CACHE_DIR=$TMPDIR/zig-local-cache
             zig build -Doptimize=ReleaseSafe
           '';
 
           installPhase = ''
             mkdir -p $out/bin
             cp zig-out/bin/lemon $out/bin/
+          '' + pkgs.lib.optionalString pkgs.stdenv.isDarwin ''
+            /usr/bin/codesign -f --entitlements ${./lemon.entitlements} -s - $out/bin/lemon
           '';
         };
       }
