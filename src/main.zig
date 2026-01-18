@@ -94,6 +94,7 @@ fn runVM(allocator: std.mem.Allocator, opts: cli.RunOptions) void {
     const gui = opts.gui;
     const width = opts.width;
     const height = opts.height;
+    const virtio_input = opts.virtio_input;
 
     if (opts.vm_name) |name| {
         const cfg = config.loadConfig(allocator) catch {
@@ -265,8 +266,14 @@ fn runVM(allocator: std.mem.Allocator, opts: cli.RunOptions) void {
             return;
         };
         vz_config.addGraphicsDevice(graphics);
-        vz_config.addKeyboard();
-        vz_config.addPointingDevice();
+        if (virtio_input) {
+            vz_config.addVirtioKeyboard();
+            vz_config.addVirtioPointingDevice();
+            std.debug.print("  Input: virtio\n", .{});
+        } else {
+            vz_config.addKeyboard();
+            vz_config.addPointingDevice();
+        }
         std.debug.print("  Graphics: {d}x{d}\n", .{ width, height });
     }
 

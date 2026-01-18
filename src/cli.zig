@@ -35,6 +35,7 @@ pub const RunOptions = struct {
     gui: bool = false,
     width: u32 = 1280,
     height: u32 = 720,
+    virtio_input: bool = false,
 };
 
 pub const CreateDiskOptions = struct {
@@ -116,6 +117,8 @@ fn parseRunCommand(allocator: std.mem.Allocator, args: *std.process.ArgIterator)
         } else if (std.mem.eql(u8, arg, "--height")) {
             const val = args.next() orelse return ParseError.MissingRequiredArg;
             opts.height = std.fmt.parseInt(u32, val, 10) catch return ParseError.InvalidValue;
+        } else if (std.mem.eql(u8, arg, "--virtio-input")) {
+            opts.virtio_input = true;
         } else if (!std.mem.startsWith(u8, arg, "-") and opts.vm_name == null and opts.kernel == null) {
             opts.vm_name = allocator.dupeZ(u8, arg) catch return ParseError.OutOfMemory;
         }
@@ -171,6 +174,7 @@ pub fn printHelp() void {
         \\        --gui               Show graphical display window
         \\        --width <N>         Display width in pixels (default: 1280)
         \\        --height <N>        Display height in pixels (default: 720)
+        \\        --virtio-input      Use virtio keyboard/mouse (lower latency for Linux)
         \\
         \\CREATE-DISK:
         \\    lemon create-disk <PATH> <SIZE_MB>

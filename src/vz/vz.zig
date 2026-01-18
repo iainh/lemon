@@ -160,6 +160,26 @@ pub const Configuration = struct {
         self.obj.msgSend(void, objc.sel("setPointingDevices:"), .{pointing_array});
     }
 
+    pub fn addVirtioKeyboard(self: *Configuration) void {
+        const VZVirtioKeyboard = objc.getClass("VZVirtioKeyboardConfiguration") orelse return;
+        const NSArray = objc.getClass("NSArray") orelse return;
+
+        const keyboard = VZVirtioKeyboard.msgSend(objc.Object, objc.sel("alloc"), .{})
+            .msgSend(objc.Object, objc.sel("init"), .{});
+        const keyboards_array = NSArray.msgSend(objc.Object, objc.sel("arrayWithObject:"), .{keyboard});
+        self.obj.msgSend(void, objc.sel("setKeyboards:"), .{keyboards_array});
+    }
+
+    pub fn addVirtioPointingDevice(self: *Configuration) void {
+        const VZVirtioPointing = objc.getClass("VZVirtioPointingDeviceConfiguration") orelse return;
+        const NSArray = objc.getClass("NSArray") orelse return;
+
+        const pointing = VZVirtioPointing.msgSend(objc.Object, objc.sel("alloc"), .{})
+            .msgSend(objc.Object, objc.sel("init"), .{});
+        const pointing_array = NSArray.msgSend(objc.Object, objc.sel("arrayWithObject:"), .{pointing});
+        self.obj.msgSend(void, objc.sel("setPointingDevices:"), .{pointing_array});
+    }
+
     pub fn addUSBController(self: *Configuration) void {
         const VZXHCIController = objc.getClass("VZXHCIControllerConfiguration") orelse return;
         const NSArray = objc.getClass("NSArray") orelse return;
