@@ -1,25 +1,24 @@
 # Lemon Development Guide
 
 ## Commands
-
 - **Build**: `zig build`
-- **Run**: `zig build run`
-- **Test**: `zig build test`
-- **Enter dev shell**: `nix develop`
+- **Run**: `zig build run -- [args]`
+- **Test all**: `zig build test`
 - **Code sign**: `codesign -f --entitlements lemon.entitlements -s - zig-out/bin/lemon`
+- **Dev shell**: `nix develop`
 
 ## Project Structure
+- `src/main.zig` - CLI entry point, VM lifecycle
+- `src/cli.zig` - Argument parsing with custom ParseError enum
+- `src/config.zig` - VM configuration persistence (~/.config/lemon/config.json)
+- `src/disk.zig` - Raw disk image creation
+- `src/signal.zig` - SIGINT/SIGTERM handling
+- `src/vz/` - Zig bindings for macOS Virtualization.framework via zig-objc
 
-- `src/main.zig` - CLI entry point
-- `src/vz/vz.zig` - Zig bindings for Virtualization.framework using zig-objc
-
-## Dependencies
-
-- `zig-objc` - Objective-C runtime bindings for Zig (mitchellh/zig-objc)
-
-## Integration Notes
-
-- Virtualization.framework requires macOS 12.0+
-- Binary must be code-signed with entitlements to use virtualization
-- Uses zig-objc for direct Objective-C runtime calls (inspired by Ghostty's approach)
-- Pattern: wrap ObjC classes in Zig structs with `objc.Object` field, use `msgSend` for method calls
+## Code Style
+- Wrap ObjC classes in Zig structs with `obj: objc.Object` field, use `msgSend` for method calls
+- Use `?T` for nullable returns, return `null` on failure (not errors) for ObjC wrappers
+- Define domain-specific error enums (e.g., `ParseError`, `DiskError`, `ConfigError`)
+- Use `[:0]const u8` for null-terminated strings (ObjC interop)
+- Prefer `defer` for cleanup (deinit, release, allocator.free)
+- Tests go in the same file using `test "name" { }` blocks
