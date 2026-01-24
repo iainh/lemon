@@ -16,6 +16,9 @@
 - `src/signal.zig` - SIGINT/SIGTERM handling
 - `src/vz/` - Zig bindings for macOS Virtualization.framework via zig-objc
 
+## Pre-commit
+- Run `zig build lint` before all commits to catch issues early
+
 ## Code Style
 - Wrap ObjC classes in Zig structs with `obj: objc.Object` field, use `msgSend` for method calls
 - Use `?T` for nullable returns, return `null` on failure (not errors) for ObjC wrappers
