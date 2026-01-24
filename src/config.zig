@@ -121,7 +121,7 @@ pub fn loadConfig(allocator: std.mem.Allocator) !ParsedConfig {
         .allocate = .alloc_always,
     }) catch return ConfigError.ParseError;
 
-    return ParsedConfig{ .value = parsed.value, .arena = parsed.arena.* };
+    return .{ .value = parsed.value, .arena = parsed.arena.* };
 }
 
 pub fn saveConfig(allocator: std.mem.Allocator, config: ConfigFile) !void {

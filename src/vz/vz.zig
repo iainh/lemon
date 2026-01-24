@@ -20,8 +20,8 @@ pub const VZError = error{
 };
 
 pub fn isSupported() bool {
-    const VZVirtualMachine = objc.getClass("VZVirtualMachine") orelse return false;
-    return VZVirtualMachine.msgSend(bool, objc.sel("isSupported"), .{});
+    const vz_virtual_machine = objc.getClass("VZVirtualMachine") orelse return false;
+    return vz_virtual_machine.msgSend(bool, objc.sel("isSupported"), .{});
 }
 
 pub const Configuration = struct {
@@ -472,8 +472,8 @@ pub const SharedDirectory = struct {
 };
 
 pub fn isRosettaSupported() bool {
-    const VZLinuxRosettaDirectoryShare = objc.getClass("VZLinuxRosettaDirectoryShare") orelse return false;
-    return VZLinuxRosettaDirectoryShare.msgSend(bool, objc.sel("isSupported"), .{});
+    const vz_rosetta_share = objc.getClass("VZLinuxRosettaDirectoryShare") orelse return false;
+    return vz_rosetta_share.msgSend(bool, objc.sel("isSupported"), .{});
 }
 
 pub const RosettaShare = struct {
@@ -704,8 +704,8 @@ pub const VirtualMachine = struct {
 };
 
 fn toNSString(str: [:0]const u8) ?objc.Object {
-    const NSString = objc.getClass("NSString") orelse return null;
-    return NSString.msgSend(objc.Object, objc.sel("stringWithUTF8String:"), .{str.ptr});
+    const ns_string = objc.getClass("NSString") orelse return null;
+    return ns_string.msgSend(objc.Object, objc.sel("stringWithUTF8String:"), .{str.ptr});
 }
 
 test "isSupported" {

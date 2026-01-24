@@ -1,4 +1,3 @@
-const std = @import("std");
 const objc = @import("objc");
 
 pub const NSApplication = struct {

@@ -110,7 +110,7 @@ pub fn parseArgs(allocator: std.mem.Allocator) ParseError!Command {
 }
 
 fn parseRunCommand(allocator: std.mem.Allocator, args: *std.process.ArgIterator) ParseError!Command {
-    var opts = RunOptions{};
+    var opts: RunOptions = .{};
 
     while (args.next()) |arg| {
         if (std.mem.eql(u8, arg, "--kernel") or std.mem.eql(u8, arg, "-k")) {
@@ -165,7 +165,7 @@ fn parseRunCommand(allocator: std.mem.Allocator, args: *std.process.ArgIterator)
 
     if (opts.kernel == null and opts.iso == null and !opts.efi and opts.vm_name == null) return ParseError.MissingRequiredArg;
 
-    return Command{ .run = opts };
+    return .{ .run = opts };
 }
 
 fn parseCreateDiskCommand(args: *std.process.ArgIterator) ParseError!Command {
@@ -173,7 +173,7 @@ fn parseCreateDiskCommand(args: *std.process.ArgIterator) ParseError!Command {
     const size_str = args.next() orelse return ParseError.MissingRequiredArg;
     const size_mb = std.fmt.parseInt(u64, size_str, 10) catch return ParseError.InvalidValue;
 
-    return Command{ .create_disk = .{
+    return .{ .create_disk = .{
         .path = path,
         .size_mb = size_mb,
     } };
@@ -181,7 +181,7 @@ fn parseCreateDiskCommand(args: *std.process.ArgIterator) ParseError!Command {
 
 fn parseInspectCommand(args: *std.process.ArgIterator) ParseError!Command {
     const name = args.next() orelse return ParseError.MissingRequiredArg;
-    return Command{ .inspect = .{ .name = name } };
+    return .{ .inspect = .{ .name = name } };
 }
 
 fn parseCreateVMCommand(args: *std.process.ArgIterator) ParseError!Command {
@@ -229,16 +229,16 @@ fn parseCreateVMCommand(args: *std.process.ArgIterator) ParseError!Command {
     if (!has_name) return ParseError.MissingRequiredArg;
     if (!has_kernel and !opts.efi) return ParseError.MissingRequiredArg;
 
-    return Command{ .create = opts };
+    return .{ .create = opts };
 }
 
 fn parseDeleteVMCommand(args: *std.process.ArgIterator) ParseError!Command {
     const name = args.next() orelse return ParseError.MissingRequiredArg;
-    return Command{ .delete = .{ .name = name } };
+    return .{ .delete = .{ .name = name } };
 }
 
 fn parsePullCommand(args: *std.process.ArgIterator) ParseError!Command {
-    var opts = PullOptions{ .name = undefined, .force = false };
+    var opts: PullOptions = .{ .name = undefined, .force = false };
     var has_name = false;
 
     while (args.next()) |arg| {
@@ -251,7 +251,7 @@ fn parsePullCommand(args: *std.process.ArgIterator) ParseError!Command {
     }
 
     if (!has_name) return ParseError.MissingRequiredArg;
-    return Command{ .pull = opts };
+    return .{ .pull = opts };
 }
 
 pub fn printHelp() void {

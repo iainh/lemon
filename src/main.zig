@@ -7,7 +7,7 @@ const config = @import("config.zig");
 const images = @import("images.zig");
 
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa: std.heap.GeneralPurposeAllocator(.{}) = .{};
     defer _ = gpa.deinit();
 
     var arena = std.heap.ArenaAllocator.init(gpa.allocator());
@@ -129,7 +129,7 @@ fn inspectVM(allocator: std.mem.Allocator, name: [:0]const u8) void {
 }
 
 fn createVM(allocator: std.mem.Allocator, opts: cli.CreateVMOptions) void {
-    const vm_config = config.VMConfig{
+    const vm_config: config.VMConfig = .{
         .name = opts.name,
         .kernel = opts.kernel,
         .initrd = opts.initrd,
