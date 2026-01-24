@@ -17,7 +17,7 @@ fn signalHandler(sig: c_int) callconv(.c) void {
 }
 
 pub fn installHandlers() !void {
-    const handler: posix.Sigaction.handler_fn = @ptrCast(&signalHandler);
+    const handler: posix.Sigaction.handler_fn = @ptrCast(@alignCast(&signalHandler));
 
     var action: posix.Sigaction = .{
         .handler = .{ .handler = handler },
