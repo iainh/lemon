@@ -6,6 +6,16 @@ const sig = @import("signal.zig");
 const config = @import("config.zig");
 const images = @import("images.zig");
 
+fn getIconPath(allocator: std.mem.Allocator) !?[:0]const u8 {
+    const exe_path = try std.fs.selfExePathAlloc(allocator);
+    defer allocator.free(exe_path);
+
+    const exe_dir = std.fs.path.dirname(exe_path) orelse return null;
+    const parent_dir = std.fs.path.dirname(exe_dir) orelse return null;
+
+    return try std.fs.path.joinZ(allocator, &.{ parent_dir, "assets", "lemon-icon-1024.icon", "Assets", "lemon-icon-1024.png" });
+}
+
 pub fn main() !void {
     var gpa: std.heap.GeneralPurposeAllocator(.{}) = .{};
     defer _ = gpa.deinit();
@@ -429,6 +439,12 @@ fn runVM(allocator: std.mem.Allocator, opts: cli.RunOptions) void {
             return;
         };
         _ = app.setActivationPolicy(0);
+
+        if (getIconPath(allocator) catch null) |icon_path| {
+            if (vz.NSImage.initWithContentsOfFile(icon_path)) |icon| {
+                app.setApplicationIconImage(icon);
+            }
+        }
 
         const rect = vz.NSRect{
             .origin = .{ .x = 100, .y = 100 },

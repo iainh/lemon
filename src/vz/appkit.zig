@@ -49,6 +49,39 @@ pub const NSApplication = struct {
         const sender_val = if (sender) |s| s.value else null;
         self.obj.msgSend(void, objc.sel("stop:"), .{sender_val});
     }
+
+    pub fn setApplicationIconImage(self: *NSApplication, image: NSImage) void {
+        self.obj.msgSend(void, objc.sel("setApplicationIconImage:"), .{image.obj});
+    }
+};
+
+pub const NSImage = struct {
+    obj: objc.Object,
+
+    pub fn initWithContentsOfFile(path: [:0]const u8) ?NSImage {
+        const NSImageClass = objc.getClass("NSImage") orelse return null;
+        const NSString = objc.getClass("NSString") orelse return null;
+        const c = @import("objc").c;
+
+        const path_str = NSString.msgSend(objc.Object, objc.sel("stringWithUTF8String:"), .{path.ptr});
+        const allocated = NSImageClass.msgSend(objc.Object, objc.sel("alloc"), .{});
+
+        const MsgSendFn = *const fn (c.id, c.SEL, c.id) callconv(.c) c.id;
+        const msg_send_fn: MsgSendFn = @ptrCast(&c.objc_msgSend);
+
+        const raw_obj = msg_send_fn(
+            allocated.value,
+            objc.sel("initWithContentsOfFile:").value,
+            path_str.value,
+        );
+
+        if (raw_obj == null) return null;
+        return .{ .obj = objc.Object{ .value = raw_obj.? } };
+    }
+
+    pub fn deinit(self: NSImage) void {
+        self.obj.release();
+    }
 };
 
 pub const NSRect = extern struct {

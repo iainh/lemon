@@ -27,6 +27,7 @@ pub fn build(b: *std.Build) !void {
     }
 
     b.installArtifact(exe);
+    b.installFile("assets/lemon-icon-1024.icon/Assets/lemon-icon-1024.png", "assets/lemon-icon-1024.icon/Assets/lemon-icon-1024.png");
 
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());

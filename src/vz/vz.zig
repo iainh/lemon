@@ -7,6 +7,7 @@ pub const RunLoop = runloop.RunLoop;
 pub const appkit = @import("appkit.zig");
 pub const NSApplication = appkit.NSApplication;
 pub const NSWindow = appkit.NSWindow;
+pub const NSImage = appkit.NSImage;
 pub const NSRect = appkit.NSRect;
 pub const NSPoint = appkit.NSPoint;
 pub const NSSize = appkit.NSSize;
