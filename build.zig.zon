@@ -13,5 +13,9 @@
             .url = "https://github.com/mitchellh/zig-objc/archive/refs/heads/main.tar.gz",
             .hash = "zig_objc-0.0.0-Ir_Sp5wTAQDuSB-PaIBSxNPhnQFT-H8UGd5kBAdnUaD4",
         },
+        .ziglint = .{
+            .url = "https://github.com/rockorager/ziglint/archive/refs/tags/v0.1.0.tar.gz",
+            .hash = "ziglint-0.0.0-t0bwL1hIAgCyAmp4pXD0oux2ET-ed9DHMmw_zWp4A80i",
+        },
     },
 }

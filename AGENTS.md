@@ -4,6 +4,7 @@
 - **Build**: `zig build`
 - **Run**: `zig build run -- [args]`
 - **Test all**: `zig build test`
+- **Lint**: `zig build lint`
 - **Code sign**: `codesign -f --entitlements lemon.entitlements -s - zig-out/bin/lemon`
 - **Dev shell**: `nix develop`
 
