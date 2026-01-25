@@ -9,16 +9,21 @@ pub fn build(b: *std.Build) !void {
         .optimize = optimize,
     });
 
+    const exe_module = b.createModule(.{
+        .root_source_file = b.path("src/main.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "objc", .module = objc_dep.module("objc") },
+        },
+    });
+    exe_module.addAnonymousImport("app_icon", .{
+        .root_source_file = b.path("assets/lemon-icon-1024.png"),
+    });
+
     const exe = b.addExecutable(.{
         .name = "lemon",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/main.zig"),
-            .target = target,
-            .optimize = optimize,
-            .imports = &.{
-                .{ .name = "objc", .module = objc_dep.module("objc") },
-            },
-        }),
+        .root_module = exe_module,
     });
 
     if (target.result.os.tag == .macos) {
@@ -27,7 +32,20 @@ pub fn build(b: *std.Build) !void {
     }
 
     b.installArtifact(exe);
-    b.installFile("assets/lemon-icon-1024.icon/Assets/lemon-icon-1024.png", "assets/lemon-icon-1024.icon/Assets/lemon-icon-1024.png");
+
+    if (target.result.os.tag == .macos) {
+        const codesign = b.addSystemCommand(&.{
+            "codesign",
+            "-f",
+            "--entitlements",
+        });
+        codesign.addFileArg(b.path("lemon.entitlements"));
+        codesign.addArg("-s");
+        codesign.addArg("-");
+        codesign.addArtifactArg(exe);
+        codesign.step.dependOn(&exe.step);
+        b.getInstallStep().dependOn(&codesign.step);
+    }
 
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());

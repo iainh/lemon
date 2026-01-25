@@ -58,21 +58,21 @@ pub const NSApplication = struct {
 pub const NSImage = struct {
     obj: objc.Object,
 
-    pub fn initWithContentsOfFile(path: [:0]const u8) ?NSImage {
+    pub fn initWithData(data: []const u8) ?NSImage {
         const NSImageClass = objc.getClass("NSImage") orelse return null;
-        const NSString = objc.getClass("NSString") orelse return null;
+        const NSDataClass = objc.getClass("NSData") orelse return null;
+
+        const ns_data = NSDataClass.msgSend(objc.Object, objc.sel("dataWithBytes:length:"), .{ data.ptr, data.len });
+
+        const allocated = NSImageClass.msgSend(objc.Object, objc.sel("alloc"), .{});
         const c = @import("objc").c;
 
-        const path_str = NSString.msgSend(objc.Object, objc.sel("stringWithUTF8String:"), .{path.ptr});
-        const allocated = NSImageClass.msgSend(objc.Object, objc.sel("alloc"), .{});
-
-        const MsgSendFn = *const fn (c.id, c.SEL, c.id) callconv(.c) c.id;
-        const msg_send_fn: MsgSendFn = @ptrCast(&c.objc_msgSend);
-
-        const raw_obj = msg_send_fn(
+        const InitWithDataFn = *const fn (c.id, c.SEL, c.id) callconv(.c) c.id;
+        const init_with_data: InitWithDataFn = @ptrCast(&c.objc_msgSend);
+        const raw_obj = init_with_data(
             allocated.value,
-            objc.sel("initWithContentsOfFile:").value,
-            path_str.value,
+            objc.sel("initWithData:").value,
+            ns_data.value,
         );
 
         if (raw_obj == null) return null;
