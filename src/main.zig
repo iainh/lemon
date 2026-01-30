@@ -44,6 +44,7 @@ pub fn main() !void {
         .create_disk => |opts| {
             disk.createRawDisk(opts.path, opts.size_mb) catch |err| {
                 switch (err) {
+                    disk.DiskError.InvalidSize => std.debug.print("Error: Disk size must be greater than zero.\n", .{}),
                     disk.DiskError.FileExists => std.debug.print("Error: File already exists: {s}\n", .{opts.path}),
                     disk.DiskError.CreateFailed => std.debug.print("Error: Failed to create file: {s}\n", .{opts.path}),
                     disk.DiskError.SeekFailed => std.debug.print("Error: Failed to seek in file\n", .{}),

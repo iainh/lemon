@@ -1,6 +1,7 @@
 const std = @import("std");
 
 pub const DiskError = error{
+    InvalidSize,
     FileExists,
     CreateFailed,
     SeekFailed,
@@ -8,6 +9,7 @@ pub const DiskError = error{
 };
 
 pub fn createRawDisk(path: [:0]const u8, size_mb: u64) !void {
+    if (size_mb == 0) return DiskError.InvalidSize;
     const size_bytes = size_mb * 1024 * 1024;
 
     if (std.fs.cwd().statFile(path)) |_| {

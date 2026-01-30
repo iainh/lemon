@@ -75,6 +75,19 @@ pub const RunOptions = struct {
     height: u32 = 720,
     vsock: bool = false,
     audio: bool = false,
+    allocator: ?std.mem.Allocator = null,
+
+    pub fn deinit(self: *RunOptions) void {
+        const alloc = self.allocator orelse return;
+        if (self.vm_name) |name| alloc.free(name);
+        for (self.shares[0..self.share_count]) |maybe_share| {
+            if (maybe_share) |share| {
+                alloc.free(share.host_path);
+                alloc.free(share.tag);
+            }
+        }
+        self.* = .{};
+    }
 };
 
 pub const CreateDiskOptions = struct {
@@ -124,7 +137,7 @@ pub fn parseArgs(allocator: std.mem.Allocator) ParseError!Command {
 }
 
 fn parseRunCommand(allocator: std.mem.Allocator, args: *std.process.ArgIterator) ParseError!Command {
-    var opts: RunOptions = .{};
+    var opts: RunOptions = .{ .allocator = allocator };
 
     while (args.next()) |arg| {
         if (std.mem.eql(u8, arg, "--kernel") or std.mem.eql(u8, arg, "-k")) {

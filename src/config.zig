@@ -52,11 +52,19 @@ pub const ConfigError = error{
     InvalidPath,
 };
 
+fn getHome() ?[]const u8 {
+    return std.posix.getenv("HOME") orelse std.posix.getenv("USERPROFILE");
+}
+
 pub fn resolvePath(allocator: std.mem.Allocator, path: []const u8) ![]const u8 {
     if (path.len == 0) return allocator.dupe(u8, path);
 
     if (path[0] == '~') {
-        const home = std.posix.getenv("HOME") orelse return ConfigError.InvalidPath;
+        const home = getHome() orelse {
+            const cwd = std.fs.cwd().realpathAlloc(allocator, ".") catch return ConfigError.InvalidPath;
+            defer allocator.free(cwd);
+            return std.fmt.allocPrint(allocator, "{s}{s}", .{ cwd, path[1..] });
+        };
         return std.fmt.allocPrint(allocator, "{s}{s}", .{ home, path[1..] });
     }
 
@@ -109,18 +117,24 @@ pub fn normalizeVMConfig(allocator: std.mem.Allocator, vm: VMConfig) !VMConfig {
 }
 
 fn getConfigDir(allocator: std.mem.Allocator) ![]const u8 {
-    const home = std.posix.getenv("HOME") orelse return ConfigError.InvalidPath;
-    return std.fmt.allocPrint(allocator, "{s}/.config/lemon", .{home});
+    if (getHome()) |home| {
+        return std.fmt.allocPrint(allocator, "{s}/.config/lemon", .{home});
+    }
+    const cwd = std.fs.cwd().realpathAlloc(allocator, ".") catch return ConfigError.InvalidPath;
+    defer allocator.free(cwd);
+    return std.fmt.allocPrint(allocator, "{s}/.lemon", .{cwd});
 }
 
 fn getConfigPath(allocator: std.mem.Allocator) ![]const u8 {
-    const home = std.posix.getenv("HOME") orelse return ConfigError.InvalidPath;
-    return std.fmt.allocPrint(allocator, "{s}/.config/lemon/vms.json", .{home});
+    const config_dir = try getConfigDir(allocator);
+    defer allocator.free(config_dir);
+    return std.fmt.allocPrint(allocator, "{s}/vms.json", .{config_dir});
 }
 
 pub fn getVMDir(allocator: std.mem.Allocator, vm_name: []const u8) ![]const u8 {
-    const home = std.posix.getenv("HOME") orelse return ConfigError.InvalidPath;
-    return std.fmt.allocPrint(allocator, "{s}/.config/lemon/{s}", .{ home, vm_name });
+    const config_dir = try getConfigDir(allocator);
+    defer allocator.free(config_dir);
+    return std.fmt.allocPrint(allocator, "{s}/{s}", .{ config_dir, vm_name });
 }
 
 pub fn ensureVMDir(allocator: std.mem.Allocator, vm_name: []const u8) ![]const u8 {

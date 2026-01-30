@@ -112,6 +112,7 @@ pub fn downloadImage(allocator: std.mem.Allocator, image: Image, force: bool) ![
     defer allocator.free(images_dir);
 
     const dest_path = try std.fmt.allocPrint(allocator, "{s}/{s}", .{ images_dir, image.filename });
+    errdefer allocator.free(dest_path);
 
     if (!force) {
         std.fs.cwd().access(dest_path, .{}) catch |err| {
@@ -141,11 +142,9 @@ pub fn downloadImage(allocator: std.mem.Allocator, image: Image, force: bool) ![
 
         if (res.term.Exited != 0) {
             std.debug.print("Download failed: {s}\n", .{res.stderr});
-            allocator.free(dest_path);
             return ImageError.DownloadFailed;
         }
     } else |_| {
-        allocator.free(dest_path);
         return ImageError.DownloadFailed;
     }
 
