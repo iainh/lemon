@@ -132,7 +132,7 @@ pub fn downloadImage(allocator: std.mem.Allocator, image: Image, force: bool) ![
 
     const result = std.process.Child.run(.{
         .allocator = allocator,
-        .argv = &.{ "curl", "-L", "-#", "-o", dest_path, image.url },
+        .argv = &.{ "curl", "-L", "-#", "-f", "-o", dest_path, image.url },
     });
 
     if (result) |res| {

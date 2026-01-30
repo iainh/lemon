@@ -39,6 +39,7 @@ pub fn main() !void {
     switch (cmd) {
         .run => |opts| runVM(allocator, opts),
         .create => |opts| createVM(allocator, opts),
+        .create_macos => |opts| createMacOSVM(allocator, opts),
         .delete => |opts| deleteVM(allocator, opts.name),
         .create_disk => |opts| {
             disk.createRawDisk(opts.path, opts.size_mb) catch |err| {
@@ -168,6 +169,549 @@ fn deleteVM(allocator: std.mem.Allocator, name: [:0]const u8) void {
     }
 }
 
+fn createMacOSVM(allocator: std.mem.Allocator, opts: cli.CreateMacOSOptions) void {
+    if (!vz.isSupported()) {
+        std.debug.print("Error: Virtualization is not supported on this system.\n", .{});
+        return;
+    }
+
+    if (!vz.isMacOSVMSupported()) {
+        std.debug.print("Error: macOS VMs are only supported on Apple Silicon.\n", .{});
+        return;
+    }
+
+    std.debug.print("🍋 Creating macOS VM '{s}'...\n", .{opts.name});
+
+    const vm_dir = config.ensureVMDir(allocator, opts.name) catch {
+        std.debug.print("Error: Failed to create VM directory.\n", .{});
+        return;
+    };
+    defer allocator.free(vm_dir);
+
+    std.debug.print("  VM directory: {s}\n", .{vm_dir});
+
+    const restore_image = blk: {
+        if (opts.ipsw) |ipsw_path| {
+            std.debug.print("  Loading restore image: {s}\n", .{ipsw_path});
+            break :blk vz.loadRestoreImage(ipsw_path) orelse {
+                std.debug.print("Error: Failed to load restore image.\n", .{});
+                return;
+            };
+        } else {
+            std.debug.print("  Fetching latest macOS restore image...\n", .{});
+            std.debug.print("  (This requires network access to Apple servers)\n", .{});
+            break :blk vz.fetchLatestSupportedRestoreImage() orelse {
+                std.debug.print("Error: Failed to fetch latest macOS restore image.\n", .{});
+                std.debug.print("\nApple's restore image service may be temporarily unavailable.\n", .{});
+                std.debug.print("You can download an IPSW manually from:\n", .{});
+                std.debug.print("  https://ipsw.me/product/VirtualMac2,1\n", .{});
+                std.debug.print("\nIMPORTANT: Select 'Apple Virtual Machine 1' as the device.\n", .{});
+                std.debug.print("Then run:\n", .{});
+                std.debug.print("  lemon create-macos {s} --ipsw /path/to/macOS.ipsw\n", .{opts.name});
+                return;
+            };
+        }
+    };
+    defer restore_image.deinit();
+
+    if (restore_image.buildVersion()) |build| {
+        std.debug.print("  macOS build: {s}\n", .{build});
+    }
+    if (restore_image.url()) |restore_url| {
+        std.debug.print("  Restore image URL: {s}\n", .{restore_url});
+    }
+
+    const requirements = restore_image.mostFeaturefulSupportedConfiguration() orelse {
+        std.debug.print("Error: This macOS version is not supported on this Mac.\n", .{});
+        return;
+    };
+    defer requirements.deinit();
+
+    const hw_model = requirements.hardwareModel() orelse {
+        std.debug.print("Error: Failed to get hardware model from requirements.\n", .{});
+        return;
+    };
+    defer hw_model.deinit();
+
+    if (!hw_model.isSupported()) {
+        std.debug.print("Error: Hardware model is not supported on this Mac.\n", .{});
+        return;
+    }
+
+    const min_cpus = requirements.minimumSupportedCPUCount();
+    const min_memory = requirements.minimumSupportedMemorySize();
+    const cpus = if (opts.cpus < min_cpus) @as(u32, @intCast(min_cpus)) else opts.cpus;
+    const memory = if (opts.memory_mb * 1024 * 1024 < min_memory) min_memory else opts.memory_mb * 1024 * 1024;
+
+    std.debug.print("  CPUs: {d} (min: {d})\n", .{ cpus, min_cpus });
+    std.debug.print("  Memory: {d} MB (min: {d} MB)\n", .{ memory / 1024 / 1024, min_memory / 1024 / 1024 });
+
+    const machine_id = vz.MacMachineIdentifier.init() orelse {
+        std.debug.print("Error: Failed to create machine identifier.\n", .{});
+        return;
+    };
+    defer machine_id.deinit();
+
+    const aux_storage_path_slice = std.fmt.allocPrint(allocator, "{s}/aux_storage.bin", .{vm_dir}) catch {
+        std.debug.print("Error: Out of memory.\n", .{});
+        return;
+    };
+    defer allocator.free(aux_storage_path_slice);
+    const aux_storage_path = allocator.dupeZ(u8, aux_storage_path_slice) catch {
+        std.debug.print("Error: Out of memory.\n", .{});
+        return;
+    };
+    defer allocator.free(aux_storage_path);
+
+    const aux_storage = vz.MacAuxiliaryStorage.create(aux_storage_path, hw_model) orelse {
+        std.debug.print("Error: Failed to create auxiliary storage.\n", .{});
+        return;
+    };
+    defer aux_storage.deinit();
+    std.debug.print("  Auxiliary storage: {s}\n", .{aux_storage_path});
+
+    const disk_path_slice = std.fmt.allocPrint(allocator, "{s}/disk.img", .{vm_dir}) catch {
+        std.debug.print("Error: Out of memory.\n", .{});
+        return;
+    };
+    defer allocator.free(disk_path_slice);
+    const disk_path = allocator.dupeZ(u8, disk_path_slice) catch {
+        std.debug.print("Error: Out of memory.\n", .{});
+        return;
+    };
+    defer allocator.free(disk_path);
+
+    const disk_size_bytes = opts.disk_size_gb * 1024 * 1024 * 1024;
+    disk.createRawDisk(disk_path, opts.disk_size_gb * 1024) catch |err| {
+        switch (err) {
+            disk.DiskError.FileExists => {},
+            else => {
+                std.debug.print("Error: Failed to create disk image.\n", .{});
+                return;
+            },
+        }
+    };
+    std.debug.print("  Disk: {s} ({d} GB)\n", .{ disk_path, opts.disk_size_gb });
+    _ = disk_size_bytes;
+
+    const hw_model_path_slice = std.fmt.allocPrint(allocator, "{s}/hardware_model.bin", .{vm_dir}) catch {
+        std.debug.print("Error: Out of memory.\n", .{});
+        return;
+    };
+    defer allocator.free(hw_model_path_slice);
+    const hw_model_path = allocator.dupeZ(u8, hw_model_path_slice) catch {
+        std.debug.print("Error: Out of memory.\n", .{});
+        return;
+    };
+    defer allocator.free(hw_model_path);
+
+    const machine_id_path_slice = std.fmt.allocPrint(allocator, "{s}/machine_id.bin", .{vm_dir}) catch {
+        std.debug.print("Error: Out of memory.\n", .{});
+        return;
+    };
+    defer allocator.free(machine_id_path_slice);
+    const machine_id_path = allocator.dupeZ(u8, machine_id_path_slice) catch {
+        std.debug.print("Error: Out of memory.\n", .{});
+        return;
+    };
+    defer allocator.free(machine_id_path);
+
+    saveDataRepresentation(hw_model.dataRepresentation(), hw_model_path) catch {
+        std.debug.print("Error: Failed to save hardware model.\n", .{});
+        return;
+    };
+
+    saveDataRepresentation(machine_id.dataRepresentation(), machine_id_path) catch {
+        std.debug.print("Error: Failed to save machine identifier.\n", .{});
+        return;
+    };
+
+    const vm_config: config.VMConfig = .{
+        .name = opts.name,
+        .vm_type = .macos,
+        .disk = disk_path,
+        .cpus = cpus,
+        .memory_mb = memory / 1024 / 1024,
+        .hardware_model = hw_model_path,
+        .machine_id = machine_id_path,
+        .aux_storage = aux_storage_path,
+        .display_width = opts.width,
+        .display_height = opts.height,
+    };
+
+    config.addVM(allocator, vm_config) catch |err| {
+        switch (err) {
+            config.ConfigError.ParseError => std.debug.print("Error: VM '{s}' already exists.\n", .{opts.name}),
+            else => std.debug.print("Error: Failed to save VM configuration.\n", .{}),
+        }
+        return;
+    };
+
+    std.debug.print("\n✅ macOS VM '{s}' created successfully!\n", .{opts.name});
+
+    if (opts.no_install) {
+        std.debug.print("\nSkipping installation (--no-install specified).\n", .{});
+        std.debug.print("To boot the VM:\n", .{});
+        std.debug.print("  lemon run {s} --gui\n", .{opts.name});
+        return;
+    }
+
+    const ipsw_path = blk: {
+        if (opts.ipsw) |path| {
+            break :blk allocator.dupeZ(u8, path) catch {
+                std.debug.print("Error: Out of memory.\n", .{});
+                return;
+            };
+        } else {
+            const restore_url = restore_image.url() orelse {
+                std.debug.print("Error: Failed to get restore image URL.\n", .{});
+                std.debug.print("To boot the VM:\n", .{});
+                std.debug.print("  lemon run {s} --gui\n", .{opts.name});
+                return;
+            };
+
+            const ipsw_dest_slice = std.fmt.allocPrint(allocator, "{s}/restore.ipsw", .{vm_dir}) catch {
+                std.debug.print("Error: Out of memory.\n", .{});
+                return;
+            };
+            defer allocator.free(ipsw_dest_slice);
+            const ipsw_dest = allocator.dupeZ(u8, ipsw_dest_slice) catch {
+                std.debug.print("Error: Out of memory.\n", .{});
+                return;
+            };
+
+            std.debug.print("\n📥 Downloading macOS restore image...\n", .{});
+            std.debug.print("  URL: {s}\n", .{restore_url});
+            std.debug.print("  Destination: {s}\n", .{ipsw_dest});
+            std.debug.print("  (This may take a while, ~13GB)\n", .{});
+
+            if (!vz.downloadFile(restore_url, ipsw_dest, null)) {
+                std.debug.print("Error: Failed to download restore image.\n", .{});
+                std.debug.print("You can download manually from:\n", .{});
+                std.debug.print("  {s}\n", .{restore_url});
+                std.debug.print("Then run:\n", .{});
+                std.debug.print("  lemon create-macos {s} --ipsw /path/to/restore.ipsw\n", .{opts.name});
+                return;
+            }
+
+            std.debug.print("  ✅ Download complete!\n", .{});
+            break :blk ipsw_dest;
+        }
+    };
+    defer allocator.free(ipsw_path);
+
+    std.debug.print("\n🔧 Installing macOS...\n", .{});
+    std.debug.print("  (This will take 15-30 minutes)\n", .{});
+
+    const install_platform = vz.MacPlatformConfiguration.init(hw_model, machine_id, aux_storage) orelse {
+        std.debug.print("Error: Failed to create platform configuration for install.\n", .{});
+        return;
+    };
+
+    const install_boot_loader = vz.MacOSBootLoader.init() orelse {
+        std.debug.print("Error: Failed to create boot loader for install.\n", .{});
+        return;
+    };
+
+    const install_config = vz.Configuration.init(cpus, memory) orelse {
+        std.debug.print("Error: Failed to create VM configuration for install.\n", .{});
+        return;
+    };
+
+    install_config.setMacPlatform(install_platform);
+    install_config.setMacOSBootLoader(install_boot_loader);
+
+    const install_storage = vz.Storage.initDiskImage(disk_path, false) orelse {
+        std.debug.print("Error: Failed to attach disk for install.\n", .{});
+        return;
+    };
+    install_config.addStorageDevice(install_storage);
+
+    if (vz.Network.initNAT()) |net| {
+        install_config.addNetworkDevice(net);
+    }
+
+    install_config.addEntropy();
+
+    if (!install_config.validate()) {
+        std.debug.print("Error: Invalid VM configuration for install.\n", .{});
+        return;
+    }
+
+    const install_vm = vz.VirtualMachine.init(install_config) orelse {
+        std.debug.print("Error: Failed to create VM for install.\n", .{});
+        return;
+    };
+
+    var installer = vz.MacOSInstaller.init(install_vm, ipsw_path) orelse {
+        std.debug.print("Error: Failed to create macOS installer.\n", .{});
+        return;
+    };
+    defer installer.deinit();
+
+    const install_result = installer.install(&printInstallProgress);
+
+    switch (install_result) {
+        .success => {
+            std.debug.print("\n\n✅ macOS installation complete!\n", .{});
+            std.debug.print("\nTo boot your new macOS VM:\n", .{});
+            std.debug.print("  lemon run {s} --gui\n", .{opts.name});
+        },
+        .failed => {
+            std.debug.print("\n\n❌ macOS installation failed.\n", .{});
+            std.debug.print("The VM has been created but macOS is not installed.\n", .{});
+            std.debug.print("You may need to delete and recreate the VM.\n", .{});
+        },
+        .pending => unreachable,
+    }
+}
+
+fn printInstallProgress(progress: f64) void {
+    const percent = @as(u32, @intFromFloat(progress * 100));
+    std.debug.print("\r  Installing: {d}%", .{percent});
+}
+
+fn saveDataRepresentation(data: vz.objc.Object, path: [:0]const u8) !void {
+    const length = data.msgSend(usize, vz.objc.sel("length"), .{});
+    const bytes = data.msgSend([*]const u8, vz.objc.sel("bytes"), .{});
+
+    const file = std.fs.cwd().createFile(path, .{}) catch return error.WriteFailed;
+    defer file.close();
+    file.writeAll(bytes[0..length]) catch return error.WriteFailed;
+}
+
+fn loadDataRepresentation(allocator: std.mem.Allocator, path: []const u8) ?vz.objc.Object {
+    const file = std.fs.cwd().openFile(path, .{}) catch return null;
+    defer file.close();
+
+    const data = file.readToEndAlloc(allocator, 10 * 1024 * 1024) catch return null;
+    defer allocator.free(data);
+
+    const ns_data = vz.objc.getClass("NSData") orelse return null;
+    return ns_data.msgSend(vz.objc.Object, vz.objc.sel("dataWithBytes:length:"), .{
+        data.ptr,
+        @as(c_ulong, data.len),
+    });
+}
+
+fn runMacOSVM(allocator: std.mem.Allocator, vm: config.VMConfig, gui: bool, width_override: u32, height_override: u32) void {
+    if (!vz.isMacOSVMSupported()) {
+        std.debug.print("Error: macOS VMs are only supported on Apple Silicon.\n", .{});
+        return;
+    }
+
+    std.debug.print("🍋 Lemon - Starting macOS VM '{s}'\n", .{vm.name});
+
+    const hw_model_path = vm.hardware_model orelse {
+        std.debug.print("Error: VM missing hardware_model path.\n", .{});
+        return;
+    };
+    const machine_id_path = vm.machine_id orelse {
+        std.debug.print("Error: VM missing machine_id path.\n", .{});
+        return;
+    };
+    const aux_storage_path = vm.aux_storage orelse {
+        std.debug.print("Error: VM missing aux_storage path.\n", .{});
+        return;
+    };
+    const disk_path = vm.disk orelse {
+        std.debug.print("Error: VM missing disk path.\n", .{});
+        return;
+    };
+
+    const hw_model_data = loadDataRepresentation(allocator, hw_model_path) orelse {
+        std.debug.print("Error: Failed to load hardware model from {s}\n", .{hw_model_path});
+        return;
+    };
+    const hw_model = vz.MacHardwareModel.initFromData(hw_model_data) orelse {
+        std.debug.print("Error: Failed to create hardware model.\n", .{});
+        return;
+    };
+    defer hw_model.deinit();
+
+    if (!hw_model.isSupported()) {
+        std.debug.print("Error: Hardware model is not supported on this Mac.\n", .{});
+        return;
+    }
+
+    const machine_id_data = loadDataRepresentation(allocator, machine_id_path) orelse {
+        std.debug.print("Error: Failed to load machine identifier from {s}\n", .{machine_id_path});
+        return;
+    };
+    const machine_id = vz.MacMachineIdentifier.initFromData(machine_id_data) orelse {
+        std.debug.print("Error: Failed to create machine identifier.\n", .{});
+        return;
+    };
+    defer machine_id.deinit();
+
+    const aux_storage_path_z = allocator.dupeZ(u8, aux_storage_path) catch {
+        std.debug.print("Error: Out of memory.\n", .{});
+        return;
+    };
+    defer allocator.free(aux_storage_path_z);
+
+    const aux_storage = vz.MacAuxiliaryStorage.load(aux_storage_path_z) orelse {
+        std.debug.print("Error: Failed to load auxiliary storage from {s}\n", .{aux_storage_path});
+        return;
+    };
+    defer aux_storage.deinit();
+
+    const platform = vz.MacPlatformConfiguration.init(hw_model, machine_id, aux_storage) orelse {
+        std.debug.print("Error: Failed to create platform configuration.\n", .{});
+        return;
+    };
+    defer platform.deinit();
+
+    const boot_loader = vz.MacOSBootLoader.init() orelse {
+        std.debug.print("Error: Failed to create macOS boot loader.\n", .{});
+        return;
+    };
+    defer boot_loader.deinit();
+
+    const memory_bytes = vm.memory_mb * 1024 * 1024;
+    const vz_config = vz.Configuration.init(vm.cpus, memory_bytes) orelse {
+        std.debug.print("Error: Failed to create VM configuration.\n", .{});
+        return;
+    };
+    defer vz_config.deinit();
+
+    vz_config.setMacPlatform(platform);
+    vz_config.setMacOSBootLoader(boot_loader);
+
+    const disk_path_z = allocator.dupeZ(u8, disk_path) catch {
+        std.debug.print("Error: Out of memory.\n", .{});
+        return;
+    };
+    defer allocator.free(disk_path_z);
+
+    const storage = vz.Storage.initDiskImage(disk_path_z, false) orelse {
+        std.debug.print("Error: Failed to attach disk: {s}\n", .{disk_path});
+        return;
+    };
+    vz_config.addStorageDevice(storage);
+
+    if (vz.Network.initNAT()) |net| {
+        vz_config.addNetworkDevice(net);
+    }
+
+    vz_config.addEntropy();
+
+    const display_width = if (width_override != 1280) width_override else vm.display_width;
+    const display_height = if (height_override != 720) height_override else vm.display_height;
+
+    const graphics = vz.MacGraphicsDevice.init(display_width, display_height, 144) orelse {
+        std.debug.print("Error: Failed to create Mac graphics device.\n", .{});
+        return;
+    };
+    vz_config.addMacGraphicsDevice(graphics);
+
+    vz_config.addKeyboard();
+    vz_config.addPointingDevice();
+
+    std.debug.print("  CPUs: {d}, Memory: {d} MB\n", .{ vm.cpus, vm.memory_mb });
+    std.debug.print("  Disk: {s}\n", .{disk_path});
+    std.debug.print("  Display: {d}x{d}\n", .{ display_width, display_height });
+
+    if (!vz_config.validate()) {
+        std.debug.print("Error: Invalid VM configuration.\n", .{});
+        return;
+    }
+
+    var mac_vm = vz.VirtualMachine.init(vz_config) orelse {
+        std.debug.print("Error: Failed to create virtual machine.\n", .{});
+        return;
+    };
+
+    sig.installHandlers() catch {
+        std.debug.print("Warning: Failed to install signal handlers.\n", .{});
+    };
+
+    std.debug.print("Starting macOS VM...\n", .{});
+
+    if (!mac_vm.canStart()) {
+        std.debug.print("Error: VM cannot start. State: {s}\n", .{@tagName(mac_vm.state())});
+        return;
+    }
+
+    const start_result = mac_vm.start();
+    switch (start_result) {
+        .success => std.debug.print("macOS VM started successfully.\n", .{}),
+        .failed => {
+            std.debug.print("Error: macOS VM failed to start.\n", .{});
+            return;
+        },
+        .pending => unreachable,
+    }
+
+    if (gui) {
+        var app = vz.NSApplication.sharedApplication() orelse {
+            std.debug.print("Error: Failed to get NSApplication.\n", .{});
+            return;
+        };
+        _ = app.setActivationPolicy(0);
+
+        if (vz.NSImage.initWithData(app_icon)) |icon| {
+            app.setApplicationIconImage(icon);
+        }
+
+        const rect = vz.NSRect{
+            .origin = .{ .x = 100, .y = 100 },
+            .size = .{ .width = @floatFromInt(display_width), .height = @floatFromInt(display_height) },
+        };
+
+        var window = vz.NSWindow.initWithContentRect(rect, 15, 2, false) orelse {
+            std.debug.print("Error: Failed to create window.\n", .{});
+            return;
+        };
+        const title_slice = std.fmt.allocPrint(allocator, "Lemon - {s}", .{vm.name}) catch {
+            window.setTitle("Lemon VM");
+            return;
+        };
+        defer allocator.free(title_slice);
+        const title = allocator.dupeZ(u8, title_slice) catch {
+            window.setTitle("Lemon VM");
+            return;
+        };
+        defer allocator.free(title);
+        window.setTitle(title);
+
+        var vm_view = vz.VirtualMachineView.init() orelse {
+            std.debug.print("Error: Failed to create VM view.\n", .{});
+            return;
+        };
+        vm_view.setVirtualMachine(mac_vm.obj);
+        vm_view.setAutomaticallyReconfiguresDisplay(true);
+
+        window.setContentView(vm_view.obj);
+        window.makeKeyAndOrderFront(null);
+        app.activateIgnoringOtherApps(true);
+
+        std.debug.print("macOS VM running. Press Ctrl+C to stop.\n", .{});
+
+        while (!sig.isShutdownRequested()) {
+            const state = mac_vm.state();
+            if (state == .stopped or state == .@"error") {
+                std.debug.print("\nVM stopped. State: {s}\n", .{@tagName(state)});
+                break;
+            }
+            app.runOnce();
+        }
+
+        if (sig.isShutdownRequested()) {
+            std.debug.print("\nShutdown requested, stopping VM...\n", .{});
+            if (mac_vm.canRequestStop()) {
+                _ = mac_vm.requestStop();
+                while (mac_vm.state() != .stopped and mac_vm.state() != .@"error") {
+                    app.runOnce();
+                }
+            }
+            std.debug.print("VM stopped.\n", .{});
+        }
+    } else {
+        std.debug.print("Note: macOS VMs require --gui to display. Use 'lemon run {s} --gui'\n", .{vm.name});
+    }
+}
+
 fn runVM(allocator: std.mem.Allocator, opts: cli.RunOptions) void {
     if (!vz.isSupported()) {
         std.debug.print("Error: Virtualization is not supported on this system.\n", .{});
@@ -200,6 +744,10 @@ fn runVM(allocator: std.mem.Allocator, opts: cli.RunOptions) void {
         };
         defer cfg.deinit();
         if (config.findVM(cfg.value, name)) |vm| {
+            if (vm.vm_type == .macos) {
+                runMacOSVM(allocator, vm, opts.gui, opts.width, opts.height);
+                return;
+            }
             if (vm.kernel) |k| kernel = allocator.dupeZ(u8, k) catch null;
             if (vm.initrd) |i| initrd = allocator.dupeZ(u8, i) catch null;
             if (vm.disk) |d| disk_path = allocator.dupeZ(u8, d) catch null;

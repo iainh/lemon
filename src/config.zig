@@ -5,8 +5,14 @@ pub const ShareConfig = struct {
     tag: []const u8,
 };
 
+pub const VMType = enum {
+    linux,
+    macos,
+};
+
 pub const VMConfig = struct {
     name: []const u8,
+    vm_type: VMType = .linux,
     kernel: ?[]const u8 = null,
     initrd: ?[]const u8 = null,
     disk: ?[]const u8 = null,
@@ -17,6 +23,11 @@ pub const VMConfig = struct {
     memory_mb: u64 = 512,
     shares: []ShareConfig = &[_]ShareConfig{},
     rosetta: bool = false,
+    hardware_model: ?[]const u8 = null,
+    machine_id: ?[]const u8 = null,
+    aux_storage: ?[]const u8 = null,
+    display_width: u32 = 1920,
+    display_height: u32 = 1080,
 };
 
 pub const ConfigFile = struct {
@@ -73,6 +84,15 @@ pub fn normalizeVMConfig(allocator: std.mem.Allocator, vm: VMConfig) !VMConfig {
     if (vm.nvram) |n| {
         result.nvram = try resolvePath(allocator, n);
     }
+    if (vm.hardware_model) |h| {
+        result.hardware_model = try resolvePath(allocator, h);
+    }
+    if (vm.machine_id) |m| {
+        result.machine_id = try resolvePath(allocator, m);
+    }
+    if (vm.aux_storage) |a| {
+        result.aux_storage = try resolvePath(allocator, a);
+    }
 
     if (vm.shares.len > 0) {
         const new_shares = try allocator.alloc(ShareConfig, vm.shares.len);
@@ -96,6 +116,17 @@ fn getConfigDir(allocator: std.mem.Allocator) ![]const u8 {
 fn getConfigPath(allocator: std.mem.Allocator) ![]const u8 {
     const home = std.posix.getenv("HOME") orelse return ConfigError.InvalidPath;
     return std.fmt.allocPrint(allocator, "{s}/.config/lemon/vms.json", .{home});
+}
+
+pub fn getVMDir(allocator: std.mem.Allocator, vm_name: []const u8) ![]const u8 {
+    const home = std.posix.getenv("HOME") orelse return ConfigError.InvalidPath;
+    return std.fmt.allocPrint(allocator, "{s}/.config/lemon/{s}", .{ home, vm_name });
+}
+
+pub fn ensureVMDir(allocator: std.mem.Allocator, vm_name: []const u8) ![]const u8 {
+    const vm_dir = try getVMDir(allocator, vm_name);
+    std.fs.cwd().makePath(vm_dir) catch {};
+    return vm_dir;
 }
 
 pub fn ensureConfigDir(allocator: std.mem.Allocator) !void {
@@ -206,10 +237,17 @@ pub fn printVMList(config: ConfigFile) void {
     std.debug.print("Configured VMs:\n", .{});
     for (config.vms) |vm| {
         std.debug.print("  {s}\n", .{vm.name});
-        if (vm.efi) {
-            std.debug.print("    boot: EFI\n", .{});
-        } else if (vm.kernel) |k| {
-            std.debug.print("    kernel: {s}\n", .{k});
+        switch (vm.vm_type) {
+            .macos => {
+                std.debug.print("    type: macOS\n", .{});
+            },
+            .linux => {
+                if (vm.efi) {
+                    std.debug.print("    boot: EFI\n", .{});
+                } else if (vm.kernel) |k| {
+                    std.debug.print("    kernel: {s}\n", .{k});
+                }
+            },
         }
         std.debug.print("    cpus: {d}, memory: {d} MB\n", .{ vm.cpus, vm.memory_mb });
     }
@@ -217,26 +255,40 @@ pub fn printVMList(config: ConfigFile) void {
 
 pub fn printVMDetails(vm: VMConfig) void {
     std.debug.print("VM: {s}\n", .{vm.name});
-    if (vm.efi) {
-        std.debug.print("  Boot:    EFI\n", .{});
-    } else if (vm.kernel) |k| {
-        std.debug.print("  Kernel:  {s}\n", .{k});
-    }
-    if (vm.initrd) |initrd| {
-        std.debug.print("  Initrd:  {s}\n", .{initrd});
-    }
-    if (vm.disk) |disk| {
-        std.debug.print("  Disk:    {s}\n", .{disk});
-    }
-    if (vm.nvram) |nvram| {
-        std.debug.print("  NVRAM:   {s}\n", .{nvram});
-    }
-    if (!vm.efi) {
-        std.debug.print("  Cmdline: {s}\n", .{vm.cmdline});
+    switch (vm.vm_type) {
+        .macos => {
+            std.debug.print("  Type:    macOS\n", .{});
+            if (vm.disk) |d| {
+                std.debug.print("  Disk:    {s}\n", .{d});
+            }
+            if (vm.aux_storage) |a| {
+                std.debug.print("  AuxStorage: {s}\n", .{a});
+            }
+            std.debug.print("  Display: {d}x{d}\n", .{ vm.display_width, vm.display_height });
+        },
+        .linux => {
+            if (vm.efi) {
+                std.debug.print("  Boot:    EFI\n", .{});
+            } else if (vm.kernel) |k| {
+                std.debug.print("  Kernel:  {s}\n", .{k});
+            }
+            if (vm.initrd) |initrd| {
+                std.debug.print("  Initrd:  {s}\n", .{initrd});
+            }
+            if (vm.disk) |d| {
+                std.debug.print("  Disk:    {s}\n", .{d});
+            }
+            if (vm.nvram) |nvram| {
+                std.debug.print("  NVRAM:   {s}\n", .{nvram});
+            }
+            if (!vm.efi) {
+                std.debug.print("  Cmdline: {s}\n", .{vm.cmdline});
+            }
+            std.debug.print("  Rosetta: {}\n", .{vm.rosetta});
+        },
     }
     std.debug.print("  CPUs:    {d}\n", .{vm.cpus});
     std.debug.print("  Memory:  {d} MB\n", .{vm.memory_mb});
-    std.debug.print("  Rosetta: {}\n", .{vm.rosetta});
     if (vm.shares.len > 0) {
         std.debug.print("  Shares:\n", .{});
         for (vm.shares) |share| {

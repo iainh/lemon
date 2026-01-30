@@ -1,5 +1,5 @@
 const std = @import("std");
-const objc = @import("objc");
+pub const objc = @import("objc");
 
 pub const runloop = @import("runloop.zig");
 pub const RunLoop = runloop.RunLoop;
@@ -49,7 +49,15 @@ pub const Configuration = struct {
         self.obj.msgSend(void, objc.sel("setBootLoader:"), .{boot_loader.obj});
     }
 
+    pub fn setMacOSBootLoader(self: Configuration, boot_loader: MacOSBootLoader) void {
+        self.obj.msgSend(void, objc.sel("setBootLoader:"), .{boot_loader.obj});
+    }
+
     pub fn setPlatform(self: Configuration, platform: GenericPlatformConfiguration) void {
+        self.obj.msgSend(void, objc.sel("setPlatform:"), .{platform.obj});
+    }
+
+    pub fn setMacPlatform(self: Configuration, platform: MacPlatformConfiguration) void {
         self.obj.msgSend(void, objc.sel("setPlatform:"), .{platform.obj});
     }
 
@@ -150,6 +158,14 @@ pub const Configuration = struct {
     }
 
     pub fn addGraphicsDevice(self: Configuration, graphics: VirtioGraphicsDevice) void {
+        const NSMutableArray = objc.getClass("NSMutableArray") orelse return;
+        const current_devices = self.obj.msgSend(objc.Object, objc.sel("graphicsDevices"), .{});
+        const new_array = NSMutableArray.msgSend(objc.Object, objc.sel("arrayWithArray:"), .{current_devices});
+        new_array.msgSend(void, objc.sel("addObject:"), .{graphics.obj});
+        self.obj.msgSend(void, objc.sel("setGraphicsDevices:"), .{new_array});
+    }
+
+    pub fn addMacGraphicsDevice(self: Configuration, graphics: MacGraphicsDevice) void {
         const NSMutableArray = objc.getClass("NSMutableArray") orelse return;
         const current_devices = self.obj.msgSend(objc.Object, objc.sel("graphicsDevices"), .{});
         const new_array = NSMutableArray.msgSend(objc.Object, objc.sel("arrayWithArray:"), .{current_devices});
@@ -358,6 +374,495 @@ pub const GenericPlatformConfiguration = struct {
     }
 
     pub fn deinit(self: *GenericPlatformConfiguration) void {
+        self.obj.release();
+    }
+};
+
+/// Check if macOS virtualization is supported on this host
+pub fn isMacOSVMSupported() bool {
+    const vz_macos_restore_image = objc.getClass("VZMacOSRestoreImage") orelse return false;
+    _ = vz_macos_restore_image;
+    return true;
+}
+
+/// Mac Hardware Model - describes the virtual Mac hardware
+pub const MacHardwareModel = struct {
+    obj: objc.Object,
+
+    /// Create from data representation (for restoring saved VMs)
+    pub fn initFromData(data: objc.Object) ?MacHardwareModel {
+        const VZMacHardwareModel = objc.getClass("VZMacHardwareModel") orelse return null;
+
+        const c = @import("objc").c;
+        const MsgSendFn = *const fn (c.id, c.SEL, c.id) callconv(.c) c.id;
+        const msg_send_fn: MsgSendFn = @ptrCast(&c.objc_msgSend);
+
+        const allocated = VZMacHardwareModel.msgSend(objc.Object, objc.sel("alloc"), .{});
+        const raw_obj = msg_send_fn(
+            allocated.value,
+            objc.sel("initWithDataRepresentation:").value,
+            data.value,
+        );
+
+        if (raw_obj == null) return null;
+        return .{ .obj = objc.Object{ .value = raw_obj.? } };
+    }
+
+    /// Get the data representation for saving
+    pub fn dataRepresentation(self: MacHardwareModel) objc.Object {
+        return self.obj.msgSend(objc.Object, objc.sel("dataRepresentation"), .{});
+    }
+
+    /// Check if this hardware model is supported on the current host
+    pub fn isSupported(self: MacHardwareModel) bool {
+        return self.obj.msgSend(bool, objc.sel("isSupported"), .{});
+    }
+
+    pub fn deinit(self: MacHardwareModel) void {
+        self.obj.release();
+    }
+};
+
+/// Mac Machine Identifier - unique identifier for a virtual Mac
+pub const MacMachineIdentifier = struct {
+    obj: objc.Object,
+
+    /// Create a new random machine identifier
+    pub fn init() ?MacMachineIdentifier {
+        const VZMacMachineIdentifier = objc.getClass("VZMacMachineIdentifier") orelse return null;
+
+        const obj = VZMacMachineIdentifier.msgSend(objc.Object, objc.sel("alloc"), .{})
+            .msgSend(objc.Object, objc.sel("init"), .{});
+
+        return .{ .obj = obj };
+    }
+
+    /// Create from data representation (for restoring saved VMs)
+    pub fn initFromData(data: objc.Object) ?MacMachineIdentifier {
+        const VZMacMachineIdentifier = objc.getClass("VZMacMachineIdentifier") orelse return null;
+
+        const c = @import("objc").c;
+        const MsgSendFn = *const fn (c.id, c.SEL, c.id) callconv(.c) c.id;
+        const msg_send_fn: MsgSendFn = @ptrCast(&c.objc_msgSend);
+
+        const allocated = VZMacMachineIdentifier.msgSend(objc.Object, objc.sel("alloc"), .{});
+        const raw_obj = msg_send_fn(
+            allocated.value,
+            objc.sel("initWithDataRepresentation:").value,
+            data.value,
+        );
+
+        if (raw_obj == null) return null;
+        return .{ .obj = objc.Object{ .value = raw_obj.? } };
+    }
+
+    /// Get the data representation for saving
+    pub fn dataRepresentation(self: MacMachineIdentifier) objc.Object {
+        return self.obj.msgSend(objc.Object, objc.sel("dataRepresentation"), .{});
+    }
+
+    pub fn deinit(self: MacMachineIdentifier) void {
+        self.obj.release();
+    }
+};
+
+/// Mac Auxiliary Storage - stores macOS-specific data (NVRAM, etc.)
+pub const MacAuxiliaryStorage = struct {
+    obj: objc.Object,
+
+    /// Create new auxiliary storage at the given path
+    pub fn create(path: [:0]const u8, hardware_model: MacHardwareModel) ?MacAuxiliaryStorage {
+        const VZMacAuxiliaryStorage = objc.getClass("VZMacAuxiliaryStorage") orelse return null;
+        const NSURL = objc.getClass("NSURL") orelse return null;
+
+        const path_str = toNSString(path) orelse return null;
+        const url = NSURL.msgSend(objc.Object, objc.sel("fileURLWithPath:"), .{path_str});
+
+        const c = @import("objc").c;
+        const MsgSendFn = *const fn (c.id, c.SEL, c.id, c.id, c_ulong, ?*anyopaque) callconv(.c) c.id;
+        const msg_send_fn: MsgSendFn = @ptrCast(&c.objc_msgSend);
+
+        const allocated = VZMacAuxiliaryStorage.msgSend(objc.Object, objc.sel("alloc"), .{});
+        const raw_obj = msg_send_fn(
+            allocated.value,
+            objc.sel("initCreatingStorageAtURL:hardwareModel:options:error:").value,
+            url.value,
+            hardware_model.obj.value,
+            0, // no options
+            null,
+        );
+
+        if (raw_obj == null) return null;
+        return .{ .obj = objc.Object{ .value = raw_obj.? } };
+    }
+
+    /// Load existing auxiliary storage from the given path
+    pub fn load(path: [:0]const u8) ?MacAuxiliaryStorage {
+        const VZMacAuxiliaryStorage = objc.getClass("VZMacAuxiliaryStorage") orelse return null;
+        const NSURL = objc.getClass("NSURL") orelse return null;
+
+        const path_str = toNSString(path) orelse return null;
+        const url = NSURL.msgSend(objc.Object, objc.sel("fileURLWithPath:"), .{path_str});
+
+        const obj = VZMacAuxiliaryStorage.msgSend(objc.Object, objc.sel("alloc"), .{})
+            .msgSend(objc.Object, objc.sel("initWithURL:"), .{url});
+
+        return .{ .obj = obj };
+    }
+
+    pub fn deinit(self: MacAuxiliaryStorage) void {
+        self.obj.release();
+    }
+};
+
+/// Mac Platform Configuration - platform config for macOS VMs on Apple Silicon
+pub const MacPlatformConfiguration = struct {
+    obj: objc.Object,
+
+    /// Create a new macOS platform configuration
+    pub fn init(
+        hardware_model: MacHardwareModel,
+        machine_identifier: MacMachineIdentifier,
+        auxiliary_storage: MacAuxiliaryStorage,
+    ) ?MacPlatformConfiguration {
+        const VZMacPlatformConfiguration = objc.getClass("VZMacPlatformConfiguration") orelse return null;
+
+        const obj = VZMacPlatformConfiguration.msgSend(objc.Object, objc.sel("alloc"), .{})
+            .msgSend(objc.Object, objc.sel("init"), .{});
+
+        obj.msgSend(void, objc.sel("setHardwareModel:"), .{hardware_model.obj});
+        obj.msgSend(void, objc.sel("setMachineIdentifier:"), .{machine_identifier.obj});
+        obj.msgSend(void, objc.sel("setAuxiliaryStorage:"), .{auxiliary_storage.obj});
+
+        return .{ .obj = obj };
+    }
+
+    pub fn deinit(self: MacPlatformConfiguration) void {
+        self.obj.release();
+    }
+};
+
+/// macOS Boot Loader - boots macOS guests
+pub const MacOSBootLoader = struct {
+    obj: objc.Object,
+
+    pub fn init() ?MacOSBootLoader {
+        const VZMacOSBootLoader = objc.getClass("VZMacOSBootLoader") orelse return null;
+
+        const obj = VZMacOSBootLoader.msgSend(objc.Object, objc.sel("alloc"), .{})
+            .msgSend(objc.Object, objc.sel("init"), .{});
+
+        return .{ .obj = obj };
+    }
+
+    pub fn deinit(self: MacOSBootLoader) void {
+        self.obj.release();
+    }
+};
+
+/// Mac Graphics Device - Metal-accelerated graphics for macOS guests
+pub const MacGraphicsDevice = struct {
+    obj: objc.Object,
+
+    /// Create a Mac graphics device with a single display
+    pub fn init(width: u32, height: u32, ppi: u32) ?MacGraphicsDevice {
+        const VZMacGraphicsDeviceConfiguration = objc.getClass("VZMacGraphicsDeviceConfiguration") orelse return null;
+        const VZMacGraphicsDisplayConfiguration = objc.getClass("VZMacGraphicsDisplayConfiguration") orelse return null;
+        const NSArray = objc.getClass("NSArray") orelse return null;
+
+        const display = VZMacGraphicsDisplayConfiguration.msgSend(objc.Object, objc.sel("alloc"), .{})
+            .msgSend(objc.Object, objc.sel("initWithWidthInPixels:heightInPixels:pixelsPerInch:"), .{
+            @as(c_long, width),
+            @as(c_long, height),
+            @as(c_long, ppi),
+        });
+
+        const displays_array = NSArray.msgSend(objc.Object, objc.sel("arrayWithObject:"), .{display});
+
+        const graphics_device = VZMacGraphicsDeviceConfiguration.msgSend(objc.Object, objc.sel("alloc"), .{})
+            .msgSend(objc.Object, objc.sel("init"), .{});
+        graphics_device.msgSend(void, objc.sel("setDisplays:"), .{displays_array});
+
+        return .{ .obj = graphics_device };
+    }
+
+    pub fn deinit(self: MacGraphicsDevice) void {
+        self.obj.release();
+    }
+};
+
+/// macOS Restore Image - represents a macOS installer image (.ipsw)
+pub const MacOSRestoreImage = struct {
+    obj: objc.Object,
+
+    /// Get the hardware model required by this restore image
+    pub fn mostFeaturefulSupportedConfiguration(self: MacOSRestoreImage) ?MacOSConfigurationRequirements {
+        const c = objc.c;
+        const MsgSendFn = *const fn (c.id, c.SEL) callconv(.c) c.id;
+        const msg_send_fn: MsgSendFn = @ptrCast(&c.objc_msgSend);
+
+        const config = msg_send_fn(self.obj.value, objc.sel("mostFeaturefulSupportedConfiguration").value);
+        if (config == null) return null;
+        return .{ .obj = objc.Object{ .value = config } };
+    }
+
+    /// Get the build version string
+    pub fn buildVersion(self: MacOSRestoreImage) ?[*:0]const u8 {
+        const c = objc.c;
+        const MsgSendFn = *const fn (c.id, c.SEL) callconv(.c) c.id;
+        const msg_send_fn: MsgSendFn = @ptrCast(&c.objc_msgSend);
+
+        const ns_string = msg_send_fn(self.obj.value, objc.sel("buildVersion").value);
+        if (ns_string == null) return null;
+
+        const StringMsgSendFn = *const fn (c.id, c.SEL) callconv(.c) [*:0]const u8;
+        const str_msg_send: StringMsgSendFn = @ptrCast(&c.objc_msgSend);
+        return str_msg_send(ns_string, objc.sel("UTF8String").value);
+    }
+
+    /// Get the URL of the restore image
+    pub fn url(self: MacOSRestoreImage) ?[*:0]const u8 {
+        const c = objc.c;
+        const MsgSendFn = *const fn (c.id, c.SEL) callconv(.c) c.id;
+        const msg_send_fn: MsgSendFn = @ptrCast(&c.objc_msgSend);
+
+        const ns_url = msg_send_fn(self.obj.value, objc.sel("URL").value);
+        if (ns_url == null) return null;
+
+        const ns_string = msg_send_fn(ns_url, objc.sel("absoluteString").value);
+        if (ns_string == null) return null;
+
+        const StringMsgSendFn = *const fn (c.id, c.SEL) callconv(.c) [*:0]const u8;
+        const str_msg_send: StringMsgSendFn = @ptrCast(&c.objc_msgSend);
+        return str_msg_send(ns_string, objc.sel("UTF8String").value);
+    }
+
+    pub fn deinit(self: MacOSRestoreImage) void {
+        self.obj.release();
+    }
+};
+
+/// macOS Configuration Requirements - requirements for running a macOS version
+pub const MacOSConfigurationRequirements = struct {
+    obj: objc.Object,
+
+    /// Get the hardware model for this configuration
+    pub fn hardwareModel(self: MacOSConfigurationRequirements) ?MacHardwareModel {
+        const c = objc.c;
+        const MsgSendFn = *const fn (c.id, c.SEL) callconv(.c) c.id;
+        const msg_send_fn: MsgSendFn = @ptrCast(&c.objc_msgSend);
+
+        const hw = msg_send_fn(self.obj.value, objc.sel("hardwareModel").value);
+        if (hw == null) return null;
+
+        const RetainFn = *const fn (c.id, c.SEL) callconv(.c) c.id;
+        const retain_fn: RetainFn = @ptrCast(&c.objc_msgSend);
+        _ = retain_fn(hw, objc.sel("retain").value);
+
+        return .{ .obj = objc.Object{ .value = hw } };
+    }
+
+    /// Get minimum supported CPU count
+    pub fn minimumSupportedCPUCount(self: MacOSConfigurationRequirements) u64 {
+        return self.obj.msgSend(u64, objc.sel("minimumSupportedCPUCount"), .{});
+    }
+
+    /// Get minimum supported memory size
+    pub fn minimumSupportedMemorySize(self: MacOSConfigurationRequirements) u64 {
+        return self.obj.msgSend(u64, objc.sel("minimumSupportedMemorySize"), .{});
+    }
+
+    pub fn deinit(self: MacOSConfigurationRequirements) void {
+        self.obj.release();
+    }
+};
+
+/// Callback context for async macOS operations
+const MacOSAsyncContext = struct {
+    result: *std.atomic.Value(AsyncResult),
+    restore_image: ?*MacOSRestoreImage = null,
+};
+
+pub const AsyncResult = enum(u8) {
+    success,
+    failed,
+    pending,
+};
+
+const MacOSRestoreImageBlock = objc.Block(MacOSAsyncContext, .{ objc.c.id, ?*anyopaque }, void);
+
+fn restoreImageCompletionHandler(ctx: *const MacOSRestoreImageBlock.Context, image: objc.c.id, err: ?*anyopaque) callconv(.c) void {
+    if (err) |err_ptr| {
+        const err_obj = objc.Object{ .value = @ptrCast(@alignCast(err_ptr)) };
+        const desc = err_obj.msgSend(objc.Object, objc.sel("localizedDescription"), .{});
+        const cstr = desc.msgSend([*:0]const u8, objc.sel("UTF8String"), .{});
+        std.debug.print("  Restore image error: {s}\n", .{cstr});
+        ctx.result.store(.failed, .release);
+    } else if (image == null) {
+        std.debug.print("  Restore image returned null.\n", .{});
+        ctx.result.store(.failed, .release);
+    } else {
+        if (ctx.restore_image) |out| {
+            const img_obj = objc.Object{ .value = image };
+            _ = img_obj.retain();
+            out.* = .{ .obj = img_obj };
+        }
+        ctx.result.store(.success, .release);
+    }
+}
+
+/// Fetch the latest supported macOS restore image URL
+pub fn fetchLatestSupportedRestoreImage() ?MacOSRestoreImage {
+    const vz_macos_restore_image = objc.getClass("VZMacOSRestoreImage") orelse return null;
+
+    var result = std.atomic.Value(AsyncResult).init(.pending);
+    var restore_image: MacOSRestoreImage = undefined;
+
+    var block = MacOSRestoreImageBlock.init(.{
+        .result = &result,
+        .restore_image = &restore_image,
+    }, &restoreImageCompletionHandler);
+
+    vz_macos_restore_image.msgSend(void, objc.sel("fetchLatestSupportedWithCompletionHandler:"), .{&block});
+
+    var run_loop = RunLoop.current() orelse return null;
+    while (result.load(.acquire) == .pending) {
+        run_loop.runOnce();
+    }
+
+    if (result.load(.acquire) == .success) {
+        return restore_image;
+    }
+    return null;
+}
+
+/// Load a macOS restore image from a local file
+pub fn loadRestoreImage(path: [:0]const u8) ?MacOSRestoreImage {
+    std.fs.cwd().access(path, .{}) catch {
+        std.debug.print("Error: IPSW file not found: {s}\n", .{path});
+        return null;
+    };
+
+    const vz_macos_restore_image = objc.getClass("VZMacOSRestoreImage") orelse return null;
+    const ns_url = objc.getClass("NSURL") orelse return null;
+
+    const path_str = toNSString(path) orelse return null;
+    const url = ns_url.msgSend(objc.Object, objc.sel("fileURLWithPath:"), .{path_str});
+
+    var result = std.atomic.Value(AsyncResult).init(.pending);
+    var restore_image: MacOSRestoreImage = undefined;
+
+    var block = MacOSRestoreImageBlock.init(.{
+        .result = &result,
+        .restore_image = &restore_image,
+    }, &restoreImageCompletionHandler);
+
+    vz_macos_restore_image.msgSend(void, objc.sel("loadFileURL:completionHandler:"), .{ url, &block });
+
+    var run_loop = RunLoop.current() orelse return null;
+    while (result.load(.acquire) == .pending) {
+        run_loop.runOnce();
+    }
+
+    if (result.load(.acquire) == .success) {
+        return restore_image;
+    }
+    return null;
+}
+
+/// Download a file from a URL to a local path using curl
+pub fn downloadFile(url_str: [*:0]const u8, dest_path: [:0]const u8, progress_callback: ?*const fn (f64) void) bool {
+    _ = progress_callback;
+
+    const result = std.process.Child.run(.{
+        .allocator = std.heap.page_allocator,
+        .argv = &.{
+            "/usr/bin/curl",
+            "-L",
+            "-#",
+            "-f",
+            "-o",
+            dest_path,
+            std.mem.span(url_str),
+        },
+    }) catch return false;
+
+    defer std.heap.page_allocator.free(result.stdout);
+    defer std.heap.page_allocator.free(result.stderr);
+
+    return result.term.Exited == 0;
+}
+
+/// macOS Installer - installs macOS into a VM
+pub const MacOSInstaller = struct {
+    obj: objc.Object,
+    progress: objc.Object,
+
+    pub fn init(vm: VirtualMachine, restore_image_path: [:0]const u8) ?MacOSInstaller {
+        const VZMacOSInstaller = objc.getClass("VZMacOSInstaller") orelse return null;
+        const NSURL = objc.getClass("NSURL") orelse return null;
+
+        const path_str = toNSString(restore_image_path) orelse return null;
+        const url = NSURL.msgSend(objc.Object, objc.sel("fileURLWithPath:"), .{path_str});
+
+        const obj = VZMacOSInstaller.msgSend(objc.Object, objc.sel("alloc"), .{})
+            .msgSend(objc.Object, objc.sel("initWithVirtualMachine:restoreImageURL:"), .{ vm.obj, url });
+
+        const progress = obj.msgSend(objc.Object, objc.sel("progress"), .{});
+
+        return .{ .obj = obj, .progress = progress };
+    }
+
+    /// Start the installation (blocking until complete, with progress callback)
+    pub fn install(self: *MacOSInstaller, progress_callback: ?*const fn (f64) void) AsyncResult {
+        var result = std.atomic.Value(AsyncResult).init(.pending);
+
+        const InstallContext = struct {
+            result: *std.atomic.Value(AsyncResult),
+        };
+
+        const InstallBlock = objc.Block(InstallContext, .{?*anyopaque}, void);
+
+        var block = InstallBlock.init(.{ .result = &result }, &struct {
+            fn handler(ctx: *const InstallBlock.Context, err: ?*anyopaque) callconv(.c) void {
+                if (err) |err_ptr| {
+                    const err_obj = objc.Object{ .value = @ptrCast(@alignCast(err_ptr)) };
+                    const desc = err_obj.msgSend(objc.Object, objc.sel("localizedDescription"), .{});
+                    const cstr = desc.msgSend([*:0]const u8, objc.sel("UTF8String"), .{});
+                    std.debug.print("\n  Installation error: {s}\n", .{cstr});
+                    ctx.result.store(.failed, .release);
+                } else {
+                    ctx.result.store(.success, .release);
+                }
+            }
+        }.handler);
+
+        self.obj.msgSend(void, objc.sel("installWithCompletionHandler:"), .{&block});
+
+        var run_loop = RunLoop.current() orelse return .failed;
+        var last_progress: f64 = 0;
+
+        while (result.load(.acquire) == .pending) {
+            run_loop.runOnce();
+
+            const current_progress = self.fractionCompleted();
+            if (current_progress - last_progress >= 0.01) {
+                last_progress = current_progress;
+                if (progress_callback) |cb| {
+                    cb(current_progress);
+                }
+            }
+        }
+
+        return result.load(.acquire);
+    }
+
+    /// Get installation progress (0.0 to 1.0)
+    pub fn fractionCompleted(self: MacOSInstaller) f64 {
+        return self.progress.msgSend(f64, objc.sel("fractionCompleted"), .{});
+    }
+
+    pub fn deinit(self: MacOSInstaller) void {
         self.obj.release();
     }
 };
@@ -711,4 +1216,12 @@ fn toNSString(str: [:0]const u8) ?objc.Object {
 
 test "isSupported" {
     _ = isSupported();
+}
+
+test "isMacOSVMSupported" {
+    _ = isMacOSVMSupported();
+}
+
+test "isRosettaSupported" {
+    _ = isRosettaSupported();
 }

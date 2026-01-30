@@ -3,6 +3,7 @@ const std = @import("std");
 pub const Command = union(enum) {
     run: RunOptions,
     create: CreateVMOptions,
+    create_macos: CreateMacOSOptions,
     delete: DeleteVMOptions,
     create_disk: CreateDiskOptions,
     pull: PullOptions,
@@ -11,6 +12,17 @@ pub const Command = union(enum) {
     inspect: InspectOptions,
     help,
     version,
+};
+
+pub const CreateMacOSOptions = struct {
+    name: [:0]const u8,
+    ipsw: ?[:0]const u8 = null,
+    disk_size_gb: u64 = 64,
+    cpus: u32 = 4,
+    memory_mb: u64 = 4096,
+    width: u32 = 1920,
+    height: u32 = 1080,
+    no_install: bool = false,
 };
 
 pub const PullOptions = struct {
@@ -86,6 +98,8 @@ pub fn parseArgs(allocator: std.mem.Allocator) ParseError!Command {
 
     if (std.mem.eql(u8, cmd_str, "run")) {
         return parseRunCommand(allocator, &args);
+    } else if (std.mem.eql(u8, cmd_str, "create-macos")) {
+        return parseCreateMacOSCommand(&args);
     } else if (std.mem.eql(u8, cmd_str, "create")) {
         return parseCreateVMCommand(&args);
     } else if (std.mem.eql(u8, cmd_str, "delete") or std.mem.eql(u8, cmd_str, "rm")) {
@@ -254,6 +268,40 @@ fn parsePullCommand(args: *std.process.ArgIterator) ParseError!Command {
     return .{ .pull = opts };
 }
 
+fn parseCreateMacOSCommand(args: *std.process.ArgIterator) ParseError!Command {
+    var opts: CreateMacOSOptions = .{ .name = undefined };
+    var has_name = false;
+
+    while (args.next()) |arg| {
+        if (std.mem.eql(u8, arg, "--ipsw")) {
+            opts.ipsw = args.next() orelse return ParseError.MissingRequiredArg;
+        } else if (std.mem.eql(u8, arg, "--disk-size")) {
+            const val = args.next() orelse return ParseError.MissingRequiredArg;
+            opts.disk_size_gb = std.fmt.parseInt(u64, val, 10) catch return ParseError.InvalidValue;
+        } else if (std.mem.eql(u8, arg, "--cpus")) {
+            const val = args.next() orelse return ParseError.MissingRequiredArg;
+            opts.cpus = std.fmt.parseInt(u32, val, 10) catch return ParseError.InvalidValue;
+        } else if (std.mem.eql(u8, arg, "--memory") or std.mem.eql(u8, arg, "-m")) {
+            const val = args.next() orelse return ParseError.MissingRequiredArg;
+            opts.memory_mb = std.fmt.parseInt(u64, val, 10) catch return ParseError.InvalidValue;
+        } else if (std.mem.eql(u8, arg, "--width")) {
+            const val = args.next() orelse return ParseError.MissingRequiredArg;
+            opts.width = std.fmt.parseInt(u32, val, 10) catch return ParseError.InvalidValue;
+        } else if (std.mem.eql(u8, arg, "--height")) {
+            const val = args.next() orelse return ParseError.MissingRequiredArg;
+            opts.height = std.fmt.parseInt(u32, val, 10) catch return ParseError.InvalidValue;
+        } else if (std.mem.eql(u8, arg, "--no-install")) {
+            opts.no_install = true;
+        } else if (!std.mem.startsWith(u8, arg, "-") and !has_name) {
+            opts.name = arg;
+            has_name = true;
+        }
+    }
+
+    if (!has_name) return ParseError.MissingRequiredArg;
+    return .{ .create_macos = opts };
+}
+
 pub fn printHelp() void {
     const help =
         \\🍋 Lemon - macOS Virtualization.framework CLI
@@ -262,16 +310,17 @@ pub fn printHelp() void {
         \\    lemon <COMMAND> [OPTIONS]
         \\
         \\COMMANDS:
-        \\    run [NAME]      Boot a VM (by config name or with options)
-        \\    create <NAME>   Create a new VM configuration
-        \\    delete <NAME>   Delete a VM configuration (alias: rm)
-        \\    list, ls        List configured VMs
-        \\    inspect <NAME>  Show VM configuration details
-        \\    create-disk     Create a raw disk image
-        \\    pull <NAME>     Download a cloud image (run 'lemon images' for list)
-        \\    images          List available images to download
-        \\    help            Show this help message
-        \\    version         Show version information
+        \\    run [NAME]          Boot a VM (by config name or with options)
+        \\    create <NAME>       Create a new Linux VM configuration
+        \\    create-macos <NAME> Create and install a macOS VM (Apple Silicon only)
+        \\    delete <NAME>       Delete a VM configuration (alias: rm)
+        \\    list, ls            List configured VMs
+        \\    inspect <NAME>      Show VM configuration details
+        \\    create-disk         Create a raw disk image
+        \\    pull <NAME>         Download a cloud image (run 'lemon images' for list)
+        \\    images              List available images to download
+        \\    help                Show this help message
+        \\    version             Show version information
         \\
         \\RUN OPTIONS:
         \\    -k, --kernel <PATH>     Path to Linux kernel (for direct boot)
@@ -302,6 +351,15 @@ pub fn printHelp() void {
         \\    -m, --memory <MB>       Memory in MB (default: 512)
         \\        --rosetta           Enable Rosetta x86_64 emulation
         \\
+        \\CREATE-MACOS OPTIONS (Apple Silicon only):
+        \\        --ipsw <PATH>       Path to macOS .ipsw file (downloads latest if not specified)
+        \\        --disk-size <GB>    Disk size in GB (default: 64)
+        \\        --cpus <N>          Number of CPUs (default: 4)
+        \\    -m, --memory <MB>       Memory in MB (default: 4096)
+        \\        --width <N>         Display width (default: 1920)
+        \\        --height <N>        Display height (default: 1080)
+        \\        --no-install        Skip automatic macOS installation
+        \\
         \\CREATE-DISK:
         \\    lemon create-disk <PATH> <SIZE_MB>
         \\
@@ -317,6 +375,11 @@ pub fn printHelp() void {
         \\    lemon run --iso fedora.iso --disk disk.img --nvram fedora.nvram --gui
         \\    lemon create fedora --efi --disk disk.img --nvram fedora.nvram -m 4096
         \\    lemon run fedora --gui
+        \\
+        \\    # macOS VM (Apple Silicon only)
+        \\    lemon create-macos ventura                    # Download & install latest macOS
+        \\    lemon create-macos sonoma --ipsw ~/Downloads/macOS.ipsw --disk-size 100
+        \\    lemon run ventura --gui
         \\
         \\    # Other examples
         \\    lemon run -k vmlinuz -d disk.img -m 1024 --cpus 4
