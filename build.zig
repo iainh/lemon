@@ -3,6 +3,7 @@ const std = @import("std");
 pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+    const skip_codesign = b.option(bool, "skip-codesign", "Skip codesign step (for nix builds)") orelse false;
 
     const objc_dep = b.dependency("objc", .{
         .target = target,
@@ -33,7 +34,7 @@ pub fn build(b: *std.Build) !void {
 
     b.installArtifact(exe);
 
-    if (target.result.os.tag == .macos) {
+    if (target.result.os.tag == .macos and !skip_codesign) {
         const codesign = b.addSystemCommand(&.{
             "codesign",
             "-f",

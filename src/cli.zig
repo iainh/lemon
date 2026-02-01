@@ -6,12 +6,18 @@ pub const Command = union(enum) {
     create_macos: CreateMacOSOptions,
     delete: DeleteVMOptions,
     create_disk: CreateDiskOptions,
+    convert: ConvertOptions,
     pull: PullOptions,
     list,
     images,
     inspect: InspectOptions,
     help,
     version,
+};
+
+pub const ConvertOptions = struct {
+    input: [:0]const u8,
+    output: [:0]const u8,
 };
 
 pub const CreateMacOSOptions = struct {
@@ -119,6 +125,8 @@ pub fn parseArgs(allocator: std.mem.Allocator) ParseError!Command {
         return parseDeleteVMCommand(&args);
     } else if (std.mem.eql(u8, cmd_str, "create-disk")) {
         return parseCreateDiskCommand(&args);
+    } else if (std.mem.eql(u8, cmd_str, "convert")) {
+        return parseConvertCommand(&args);
     } else if (std.mem.eql(u8, cmd_str, "list") or std.mem.eql(u8, cmd_str, "ls")) {
         return .list;
     } else if (std.mem.eql(u8, cmd_str, "pull")) {
@@ -203,6 +211,16 @@ fn parseCreateDiskCommand(args: *std.process.ArgIterator) ParseError!Command {
     return .{ .create_disk = .{
         .path = path,
         .size_mb = size_mb,
+    } };
+}
+
+fn parseConvertCommand(args: *std.process.ArgIterator) ParseError!Command {
+    const input = args.next() orelse return ParseError.MissingRequiredArg;
+    const output = args.next() orelse return ParseError.MissingRequiredArg;
+
+    return .{ .convert = .{
+        .input = input,
+        .output = output,
     } };
 }
 
@@ -330,6 +348,7 @@ pub fn printHelp() void {
         \\    list, ls            List configured VMs
         \\    inspect <NAME>      Show VM configuration details
         \\    create-disk         Create a raw disk image
+        \\    convert             Convert qcow2 to raw disk image
         \\    pull <NAME>         Download a cloud image (run 'lemon images' for list)
         \\    images              List available images to download
         \\    help                Show this help message
@@ -375,6 +394,10 @@ pub fn printHelp() void {
         \\
         \\CREATE-DISK:
         \\    lemon create-disk <PATH> <SIZE_MB>
+        \\
+        \\CONVERT:
+        \\    lemon convert <INPUT.qcow2> <OUTPUT.raw>
+        \\    Converts a qcow2 disk image to raw format for Virtualization.framework
         \\
         \\CONFIG FILE:
         \\    VMs are stored in ~/.config/lemon/vms.json

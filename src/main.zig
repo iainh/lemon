@@ -5,6 +5,7 @@ const disk = @import("disk.zig");
 const sig = @import("signal.zig");
 const config = @import("config.zig");
 const images = @import("images.zig");
+const qcow2 = @import("qcow2.zig");
 
 const app_icon = @embedFile("app_icon");
 
@@ -52,6 +53,7 @@ pub fn main() !void {
                 }
             };
         },
+        .convert => |opts| convertImage(allocator, opts),
         .pull => |opts| pullImage(allocator, opts),
         .images => images.printImageList(),
         .list => listVMs(allocator),
@@ -59,6 +61,32 @@ pub fn main() !void {
         .help => cli.printHelp(),
         .version => cli.printVersion(),
     }
+}
+
+fn convertImage(allocator: std.mem.Allocator, opts: cli.ConvertOptions) void {
+    std.debug.print("Converting {s} -> {s}\n", .{ opts.input, opts.output });
+
+    qcow2.convertToRaw(allocator, opts.input, opts.output, printProgress) catch |err| {
+        switch (err) {
+            qcow2.Qcow2Error.InvalidMagic => std.debug.print("Error: Not a valid qcow2 file.\n", .{}),
+            qcow2.Qcow2Error.UnsupportedVersion => std.debug.print("Error: Unsupported qcow2 version (only v2/v3 supported).\n", .{}),
+            qcow2.Qcow2Error.Encrypted => std.debug.print("Error: Encrypted qcow2 images are not supported.\n", .{}),
+            qcow2.Qcow2Error.HasBackingFile => std.debug.print("Error: Images with backing files are not supported.\n", .{}),
+            qcow2.Qcow2Error.ReadError => std.debug.print("Error: Failed to read qcow2 file.\n", .{}),
+            qcow2.Qcow2Error.WriteError => std.debug.print("Error: Failed to write raw file.\n", .{}),
+            qcow2.Qcow2Error.SeekError => std.debug.print("Error: Failed to seek in file.\n", .{}),
+            qcow2.Qcow2Error.OutOfMemory => std.debug.print("Error: Out of memory.\n", .{}),
+        }
+        return;
+    };
+
+    std.debug.print("\nYou can now boot with:\n", .{});
+    std.debug.print("  lemon run --efi --disk {s} --gui\n", .{opts.output});
+}
+
+fn printProgress(current: u64, total: u64) void {
+    const percent = (current * 100) / total;
+    std.debug.print("\rProgress: {}% ({}/{})", .{ percent, current, total });
 }
 
 fn pullImage(allocator: std.mem.Allocator, opts: cli.PullOptions) void {
