@@ -90,8 +90,8 @@ system; Lemon creates and persists the EFI variable store automatically.
 Supplying `--ssh-key` creates a `lemon` guest account through cloud-init; the
 guest image must include cloud-init. Use `--user` to choose another account.
 `lemon vm ssh` discovers the VM's NAT address from the macOS DHCP leases and
-waits for SSH to become ready. It uses your SSH agent and normal key discovery,
-or accepts a private key with `-i`.
+waits for the SSH protocol and selected authentication to become ready. It uses
+your SSH agent and normal key discovery, or accepts a private key with `-i`.
 
 Run a configuration command without opening an interactive shell:
 

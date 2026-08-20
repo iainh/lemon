@@ -5,6 +5,8 @@ use std::os::fd::AsRawFd;
 use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
 use std::process::{Command, ExitStatus};
+use std::thread;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use sha2::{Digest, Sha256};
@@ -189,6 +191,45 @@ pub fn exec_ssh(
 ) -> Result<()> {
     use std::os::unix::process::CommandExt;
 
+    let mut command = ssh_command(user, address, identity, options, false);
+    let error = command.args(remote_command).exec();
+    Err(error).context("failed to execute ssh")
+}
+
+pub fn wait_for_ssh_authentication(
+    user: &str,
+    address: IpAddr,
+    identity: Option<&Path>,
+    options: &[String],
+    timeout: Duration,
+) -> Result<()> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        let output = ssh_command(user, address, identity, options, true)
+            .arg("true")
+            .output()
+            .context("failed to probe SSH authentication")?;
+        if output.status.success() {
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            let last_error = String::from_utf8_lossy(&output.stderr);
+            bail!(
+                "SSH authentication for {user}@{address} did not become ready within {timeout:?}: {}",
+                last_error.trim()
+            );
+        }
+        thread::sleep(Duration::from_secs(1));
+    }
+}
+
+fn ssh_command(
+    user: &str,
+    address: IpAddr,
+    identity: Option<&Path>,
+    options: &[String],
+    probe: bool,
+) -> Command {
     let mut command = Command::new("ssh");
     if let Some(identity) = identity {
         command.args(["-i".as_ref(), identity.as_os_str()]);
@@ -196,11 +237,18 @@ pub fn exec_ssh(
     for option in options {
         command.args(["-o", option]);
     }
-    let error = command
-        .arg(format!("{user}@{address}"))
-        .args(remote_command)
-        .exec();
-    Err(error).context("failed to execute ssh")
+    if probe {
+        command.args([
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            "ConnectTimeout=2",
+            "-o",
+            "ConnectionAttempts=1",
+        ]);
+    }
+    command.arg(format!("{user}@{address}"));
+    command
 }
 
 fn prepare_vm(vm: &VmConfig) -> Result<()> {
@@ -368,6 +416,23 @@ mod tests {
         assert_eq!(args.first().unwrap(), "run");
         assert!(args.contains(&OsString::from("GREETING=hello world")));
         assert_eq!(args.last().unwrap(), "daemon off;");
+    }
+
+    #[test]
+    fn builds_ssh_probe_options_before_the_destination() {
+        let command = ssh_command(
+            "lemon",
+            "192.0.2.1".parse().unwrap(),
+            None,
+            &["StrictHostKeyChecking=no".into()],
+            true,
+        );
+        let args = command
+            .get_args()
+            .map(|argument| argument.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(args.last().unwrap(), "lemon@192.0.2.1");
+        assert!(args.windows(2).any(|pair| pair == ["-o", "BatchMode=yes"]));
     }
 
     #[test]

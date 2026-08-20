@@ -315,6 +315,13 @@ fn run_vm(command: VmCommand, store: &Store) -> Result<()> {
             validate_guest_user(&user)?;
             let identity = identity.as_deref().map(canonical_file).transpose()?;
             let address = network::wait_for_ssh(mac_address, Duration::from_secs(wait))?;
+            runtime::wait_for_ssh_authentication(
+                &user,
+                address,
+                identity.as_deref(),
+                &ssh_options,
+                Duration::from_secs(wait),
+            )?;
             runtime::exec_ssh(&user, address, identity.as_deref(), &ssh_options, &command)?;
         }
         VmCommand::Delete { name, purge } => {
