@@ -1,5 +1,7 @@
 use std::ffi::OsString;
+use std::fs::{File, OpenOptions};
 use std::net::IpAddr;
+use std::os::fd::AsRawFd;
 use std::path::Path;
 use std::process::{Command, ExitStatus};
 
@@ -111,6 +113,7 @@ pub fn container_args(service: &ServiceConfig) -> Result<Vec<OsString>> {
 pub fn run_vm(store: &Store, name: &str, interactive: bool) -> Result<ExitStatus> {
     let vm = store.load_vm(name)?;
     prepare_vm(&vm)?;
+    let _lock = acquire_vm_lock(store, name)?;
     let log_path = store.log_dir().join(format!("vm-{name}.log"));
     std::fs::create_dir_all(store.log_dir()).context("failed to create log directory")?;
     let args = vfkit_args(&vm, interactive, &log_path);
@@ -128,6 +131,8 @@ pub fn exec_service(store: &Store, name: &str) -> Result<()> {
         Workload::Vm { vm } => {
             let config = store.load_vm(vm)?;
             prepare_vm(&config)?;
+            let lock = acquire_vm_lock(store, vm)?;
+            preserve_lock_across_exec(&lock)?;
             let log_path = store.log_dir().join(format!("vm-{vm}.log"));
             std::fs::create_dir_all(store.log_dir())?;
             Command::new("vfkit")
@@ -159,6 +164,42 @@ fn prepare_vm(vm: &VmConfig) -> Result<()> {
                 format!("failed to create EFI state directory {}", parent.display())
             })?;
         }
+    }
+    Ok(())
+}
+
+fn acquire_vm_lock(store: &Store, name: &str) -> Result<File> {
+    let path = store.vm_lock_path(name);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create VM state directory {}", parent.display()))?;
+    }
+    let file = OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .open(&path)
+        .with_context(|| format!("failed to open VM lock {}", path.display()))?;
+    // SAFETY: flock only reads the valid file descriptor and has no pointer arguments.
+    let result = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+    if result != 0 {
+        let error = std::io::Error::last_os_error();
+        if error.kind() == std::io::ErrorKind::WouldBlock {
+            bail!("VM {name:?} is already running");
+        }
+        return Err(error).context("failed to lock VM");
+    }
+    Ok(file)
+}
+
+fn preserve_lock_across_exec(file: &File) -> Result<()> {
+    let descriptor = file.as_raw_fd();
+    // SAFETY: fcntl only operates on the valid descriptor and uses integer arguments here.
+    let flags = unsafe { libc::fcntl(descriptor, libc::F_GETFD) };
+    if flags == -1
+        || unsafe { libc::fcntl(descriptor, libc::F_SETFD, flags & !libc::FD_CLOEXEC) } == -1
+    {
+        return Err(std::io::Error::last_os_error()).context("failed to preserve VM lock");
     }
     Ok(())
 }
@@ -197,5 +238,17 @@ mod tests {
         assert_eq!(args.first().unwrap(), "run");
         assert!(args.contains(&OsString::from("GREETING=hello world")));
         assert_eq!(args.last().unwrap(), "daemon off;");
+    }
+
+    #[test]
+    fn prevents_two_processes_from_opening_the_same_vm() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Store {
+            config_dir: temp.path().join("config"),
+            data_dir: temp.path().join("data"),
+        };
+        let _lock = acquire_vm_lock(&store, "dev").unwrap();
+        let error = acquire_vm_lock(&store, "dev").unwrap_err();
+        assert!(error.to_string().contains("already running"));
     }
 }

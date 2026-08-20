@@ -99,6 +99,10 @@ impl Store {
         self.data_dir.join("vms").join(name).join("efi-vars")
     }
 
+    pub fn vm_lock_path(&self, name: &str) -> PathBuf {
+        self.data_dir.join("vms").join(name).join("run.lock")
+    }
+
     pub fn create_cloud_init(
         &self,
         vm_name: &str,

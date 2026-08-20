@@ -320,6 +320,16 @@ fn run_service(command: ServiceCommand, store: &Store) -> Result<()> {
             if store.service_path(&service.name).exists() {
                 bail!("service {:?} already exists", service.name);
             }
+            if let Workload::Vm { vm } = &service.workload {
+                if let Some(existing) = store.list_services()?.into_iter().find(|candidate| {
+                    matches!(&candidate.workload, Workload::Vm { vm: candidate_vm } if candidate_vm == vm)
+                }) {
+                    bail!(
+                        "VM {vm:?} is already assigned to service {:?}",
+                        existing.name
+                    );
+                }
+            }
             store.save_service(&service)?;
             println!(
                 "Created service {} (run `lemon service start {}`)",
