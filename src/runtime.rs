@@ -218,6 +218,7 @@ pub(crate) fn acquire_vm_lock(store: &Store, name: &str) -> Result<File> {
     }
     let file = OpenOptions::new()
         .create(true)
+        .truncate(false)
         .read(true)
         .write(true)
         .open(&path)

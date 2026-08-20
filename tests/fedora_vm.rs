@@ -165,6 +165,9 @@ fn boots_current_fedora_server_aarch64_image() -> Result<()> {
     let log_dir = home.join("Library/Application Support/dev.lemon.lemon/logs");
     let stderr_path = log_dir.join(format!("{SERVICE_NAME}.error.log"));
     wait_for_service_start(lemon, &home, &stderr_path)?;
+    let starts = vfkit_start_count(&stderr_path);
+    run_lemon(lemon, &home, ["service", "start", SERVICE_NAME])?;
+    wait_for_additional_start(lemon, &home, &stderr_path, starts)?;
     eprintln!("Fedora VM started; observing it for {BOOT_SETTLE_TIME:?}");
     wait_while_service_running(lemon, &home, BOOT_SETTLE_TIME, &stderr_path)?;
 
@@ -282,6 +285,31 @@ fn wait_for_service_start(lemon: &str, home: &Path, log_path: &Path) -> Result<(
         "vfkit did not report a running VM within {START_TIMEOUT:?}:\n{}",
         read_log(log_path)
     )
+}
+
+fn wait_for_additional_start(
+    lemon: &str,
+    home: &Path,
+    log_path: &Path,
+    previous_starts: usize,
+) -> Result<()> {
+    let deadline = Instant::now() + START_TIMEOUT;
+    while Instant::now() < deadline {
+        if service_state(lemon, home)?.contains(": running")
+            && vfkit_start_count(log_path) > previous_starts
+        {
+            return Ok(());
+        }
+        thread::sleep(Duration::from_millis(250));
+    }
+    bail!(
+        "launchd did not restart vfkit within {START_TIMEOUT:?}:\n{}",
+        read_log(log_path)
+    )
+}
+
+fn vfkit_start_count(path: &Path) -> usize {
+    read_log(path).matches("virtual machine is running").count()
 }
 
 fn wait_while_service_running(
