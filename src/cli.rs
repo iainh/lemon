@@ -391,14 +391,23 @@ fn run_service(command: ServiceCommand, store: &Store) -> Result<()> {
             );
         }
         ServiceCommand::List => {
-            println!("NAME\tTYPE\tSTATE\tRESTART");
+            println!("NAME\tTYPE\tSTATE\tPID\tRESTARTS\tLAST-EXIT\tRESTART");
             for service in store.list_services()? {
                 let kind = match service.workload {
                     Workload::Vm { .. } => "vm",
                     Workload::Container { .. } => "container",
                 };
-                let state = launchd::state(&service.name)?.as_str();
-                println!("{}\t{}\t{}\t{}", service.name, kind, state, service.restart);
+                let status = launchd::status(&service.name)?;
+                println!(
+                    "{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                    service.name,
+                    kind,
+                    status.state.as_str(),
+                    display_option(status.pid),
+                    display_option(status.runs.map(|runs| runs.saturating_sub(1))),
+                    display_option(status.last_exit_code),
+                    service.restart
+                );
             }
         }
         ServiceCommand::Start { name } => {
@@ -417,7 +426,11 @@ fn run_service(command: ServiceCommand, store: &Store) -> Result<()> {
         }
         ServiceCommand::Status { name } => {
             store.load_service(&name)?;
-            println!("{name}: {}", launchd::state(&name)?.as_str());
+            let status = launchd::status(&name)?;
+            println!("state: {}", status.state.as_str());
+            println!("pid: {}", display_option(status.pid));
+            println!("runs: {}", display_option(status.runs));
+            println!("last exit code: {}", display_option(status.last_exit_code));
         }
         ServiceCommand::Delete { name } => {
             let path = store.service_path(&name);
@@ -528,4 +541,8 @@ fn validate_guest_user(user: &str) -> Result<()> {
         );
     }
     Ok(())
+}
+
+fn display_option<T: std::fmt::Display>(value: Option<T>) -> String {
+    value.map_or_else(|| "-".into(), |value| value.to_string())
 }

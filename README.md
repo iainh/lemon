@@ -114,10 +114,15 @@ LaunchAgent and definition.
 
 ## How supervision works
 
-`lemon service start` writes `~/Library/LaunchAgents/dev.lemon.<name>.plist` and
-loads it into the current GUI domain. launchd starts Lemon's hidden
+`lemon service start` atomically writes
+`~/Library/LaunchAgents/dev.lemon.<name>.plist` and loads it into the current
+GUI domain. Starting a loaded service replaces the job so configuration changes
+take effect. launchd starts Lemon's hidden
 `run-service` command, which replaces itself with `vfkit` or `container` using
 `exec(2)`. Signals and exit status therefore reach the real runtime directly.
+Stopping a VM service lets vfkit request a graceful guest shutdown before it
+falls back to a forced stop. Status output includes the process ID, run count,
+and last exit code reported by launchd.
 
 Configuration is stored under `~/Library/Application Support/dev.lemon.lemon`
 and service logs are under Lemon's standard macOS data directory.
