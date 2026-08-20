@@ -31,6 +31,22 @@ cargo install --path .
 Keep the installed `lemon` binary at the same path after starting services;
 LaunchAgents refer to its absolute path.
 
+### Nix
+
+The flake supports Apple silicon macOS and includes Lemon, Rust, vfkit, Apple
+container, OpenSSH, and the integration-test tools:
+
+```sh
+nix develop
+cargo test
+
+nix build
+nix run . -- doctor
+```
+
+Initialize the Apple container runtime once with `container system start` before
+using container services.
+
 ## Quick start
 
 Pull and run an OCI container at login:
