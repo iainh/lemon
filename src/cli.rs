@@ -70,8 +70,13 @@ enum VmCommand {
         #[arg(last = true)]
         command: Vec<String>,
     },
-    /// Delete a VM definition (disk images are preserved).
-    Delete { name: String },
+    /// Delete a VM definition.
+    Delete {
+        name: String,
+        /// Also remove Lemon-managed state and cloned disks.
+        #[arg(long)]
+        purge: bool,
+    },
 }
 
 #[derive(Debug, Args)]
@@ -272,7 +277,7 @@ fn run_vm(command: VmCommand, store: &Store) -> Result<()> {
             let address = network::wait_for_ssh(mac_address, Duration::from_secs(wait))?;
             runtime::exec_ssh(&user, address, identity.as_deref(), &ssh_options, &command)?;
         }
-        VmCommand::Delete { name } => {
+        VmCommand::Delete { name, purge } => {
             if let Some(service) = store
                 .list_services()?
                 .into_iter()
@@ -290,7 +295,17 @@ fn run_vm(command: VmCommand, store: &Store) -> Result<()> {
                 .transpose()?;
             fs::remove_file(&path)
                 .with_context(|| format!("VM {name:?} does not exist ({})", path.display()))?;
-            println!("Deleted VM {name}; disk images were preserved");
+            if purge {
+                let directory = store.vm_data_dir(&name);
+                if directory.exists() {
+                    fs::remove_dir_all(&directory).with_context(|| {
+                        format!("failed to remove VM data {}", directory.display())
+                    })?;
+                }
+                println!("Deleted VM {name} and its Lemon-managed data");
+            } else {
+                println!("Deleted VM {name}; disk images and VM data were preserved");
+            }
         }
     }
     Ok(())

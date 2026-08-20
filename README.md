@@ -107,8 +107,10 @@ lemon service create|list|start|stop|status|delete|logs
 lemon doctor
 ```
 
-Use `lemon <command> --help` for all flags. VM deletion preserves disk images.
-Service deletion unloads and removes only Lemon's LaunchAgent and definition.
+Use `lemon <command> --help` for all flags. VM deletion preserves disk images
+and VM data by default; pass `lemon vm delete --purge` to remove cloned disks
+and other Lemon-managed data. Service deletion unloads and removes only Lemon's
+LaunchAgent and definition.
 
 ## How supervision works
 
