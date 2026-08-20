@@ -5,7 +5,9 @@ use std::process::Command;
 use anyhow::{Context, Result, bail};
 use clap::{Args, Parser, Subcommand};
 
-use crate::config::{ServiceConfig, Store, VmBoot, VmConfig, Workload, validate_name};
+use crate::config::{
+    ServiceConfig, Store, VmBoot, VmConfig, Workload, generate_mac_address, validate_name,
+};
 use crate::{launchd, runtime};
 
 #[derive(Debug, Parser)]
@@ -174,6 +176,7 @@ fn run_vm(command: VmCommand, store: &Store) -> Result<()> {
                 name: args.name.clone(),
                 cpus: args.cpus,
                 memory_mib: args.memory,
+                mac_address: Some(generate_mac_address()?),
                 boot,
                 disks,
             })?;

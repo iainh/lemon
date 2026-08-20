@@ -39,7 +39,11 @@ pub fn vfkit_args(vm: &VmConfig, interactive: bool, log_path: &Path) -> Vec<OsSt
             format!("virtio-blk,path={}", disk.display()).into(),
         ]);
     }
-    args.extend(["--device".into(), "virtio-net,nat".into()]);
+    let network = vm.mac_address.as_ref().map_or_else(
+        || "virtio-net,nat".to_owned(),
+        |mac| format!("virtio-net,nat,mac={mac}"),
+    );
+    args.extend(["--device".into(), network.into()]);
     args.extend([
         "--device".into(),
         if interactive {

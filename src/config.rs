@@ -12,6 +12,8 @@ pub struct VmConfig {
     pub name: String,
     pub cpus: u8,
     pub memory_mib: u32,
+    #[serde(default)]
+    pub mac_address: Option<String>,
     pub boot: VmBoot,
     pub disks: Vec<PathBuf>,
 }
@@ -93,7 +95,12 @@ impl Store {
     }
 
     pub fn load_vm(&self, name: &str) -> Result<VmConfig> {
-        read_toml(&self.vm_path(name), "VM", name)
+        let mut config: VmConfig = read_toml(&self.vm_path(name), "VM", name)?;
+        if config.mac_address.is_none() {
+            config.mac_address = Some(generate_mac_address()?);
+            self.save_vm(&config)?;
+        }
+        Ok(config)
     }
 
     pub fn save_service(&self, config: &ServiceConfig) -> Result<()> {
@@ -124,6 +131,18 @@ pub fn validate_name(name: &str) -> Result<()> {
         );
     }
     Ok(())
+}
+
+pub fn generate_mac_address() -> Result<String> {
+    let mut bytes = [0_u8; 6];
+    getrandom::fill(&mut bytes)
+        .map_err(|error| anyhow::anyhow!("failed to generate a VM MAC address: {error}"))?;
+    bytes[0] = (bytes[0] | 0x02) & 0xfe;
+    Ok(bytes
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<Vec<_>>()
+        .join(":"))
 }
 
 fn write_toml<T: Serialize>(path: &Path, value: &T) -> Result<()> {
@@ -165,6 +184,14 @@ mod tests {
         assert!(validate_name("").is_err());
         assert!(validate_name("bad/name").is_err());
         assert!(validate_name("_bad").is_err());
+    }
+
+    #[test]
+    fn generates_a_locally_administered_unicast_mac_address() {
+        let mac = generate_mac_address().unwrap();
+        let first = u8::from_str_radix(&mac[..2], 16).unwrap();
+        assert_eq!(mac.len(), 17);
+        assert_eq!(first & 0x03, 0x02);
     }
 
     #[test]
