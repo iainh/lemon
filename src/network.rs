@@ -2,7 +2,7 @@ use std::fs;
 use std::net::{IpAddr, SocketAddr, TcpStream};
 use std::path::Path;
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, bail};
 
@@ -12,12 +12,11 @@ pub fn wait_for_ssh(mac_address: &str, timeout: Duration) -> Result<IpAddr> {
     let deadline = Instant::now() + timeout;
     let mut leased_address = None;
     loop {
+        if let Some(address) = ssh_address(mac_address)? {
+            return Ok(address);
+        }
         if let Some(address) = find_dhcp_lease(Path::new(DHCP_LEASES), mac_address)? {
             leased_address = Some(address);
-            let socket = SocketAddr::new(address, 22);
-            if TcpStream::connect_timeout(&socket, Duration::from_millis(500)).is_ok() {
-                return Ok(address);
-            }
         }
         if Instant::now() >= deadline {
             break;
@@ -30,7 +29,27 @@ pub fn wait_for_ssh(mac_address: &str, timeout: Duration) -> Result<IpAddr> {
     bail!("VM did not obtain a DHCP lease within {timeout:?}");
 }
 
+pub fn ssh_address(mac_address: &str) -> Result<Option<IpAddr>> {
+    let Some(address) = find_dhcp_lease(Path::new(DHCP_LEASES), mac_address)? else {
+        return Ok(None);
+    };
+    let socket = SocketAddr::new(address, 22);
+    Ok(
+        TcpStream::connect_timeout(&socket, Duration::from_millis(500))
+            .is_ok()
+            .then_some(address),
+    )
+}
+
 fn find_dhcp_lease(path: &Path, mac_address: &str) -> Result<Option<IpAddr>> {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .context("system clock is before the Unix epoch")?
+        .as_secs();
+    find_dhcp_lease_at(path, mac_address, now)
+}
+
+fn find_dhcp_lease_at(path: &Path, mac_address: &str, now: u64) -> Result<Option<IpAddr>> {
     let expected_mac = parse_mac(mac_address)?;
     let body = match fs::read_to_string(path) {
         Ok(body) => body,
@@ -43,6 +62,7 @@ fn find_dhcp_lease(path: &Path, mac_address: &str) -> Result<Option<IpAddr>> {
     };
     let mut address = None;
     let mut hardware_address = None;
+    let mut expires_at = None;
     let mut matching_address = None;
 
     for line in body.lines().map(str::trim) {
@@ -50,9 +70,12 @@ fn find_dhcp_lease(path: &Path, mac_address: &str) -> Result<Option<IpAddr>> {
             "{" => {
                 address = None;
                 hardware_address = None;
+                expires_at = None;
             }
             "}" => {
-                if hardware_address == Some(expected_mac) {
+                if hardware_address == Some(expected_mac)
+                    && expires_at.is_some_and(|lease| lease > now)
+                {
                     if let Some(address) = address {
                         matching_address = Some(address);
                     }
@@ -68,12 +91,20 @@ fn find_dhcp_lease(path: &Path, mac_address: &str) -> Result<Option<IpAddr>> {
                         let value = value.split_once(',').map_or(value, |(_, value)| value);
                         hardware_address = parse_mac(value).ok();
                     }
+                    "lease" => expires_at = parse_lease(value),
                     _ => {}
                 }
             }
         }
     }
     Ok(matching_address)
+}
+
+fn parse_lease(value: &str) -> Option<u64> {
+    value.strip_prefix("0x").map_or_else(
+        || value.parse().ok(),
+        |value| u64::from_str_radix(value, 16).ok(),
+    )
 }
 
 fn parse_mac(value: &str) -> Result<[u8; 6]> {
@@ -96,13 +127,17 @@ mod tests {
         let path = temp.path().join("leases");
         fs::write(
             &path,
-            "{\nip_address=192.168.64.2\nhw_address=1,a:b:c:d:e:f\n}\n\
-             {\nname=dev\nip_address=192.168.64.3\nhw_address=1,0a:0b:0c:0d:0e:0f\nlease=123\n}\n",
+            "{\nip_address=192.168.64.2\nhw_address=1,0a:0b:0c:0d:0e:0f\nlease=0x96\n}\n\
+             {\nname=dev\nip_address=192.168.64.3\nhw_address=1,0a:0b:0c:0d:0e:0f\nlease=0xc8\n}\n",
         )
         .unwrap();
         assert_eq!(
-            find_dhcp_lease(&path, "0a:0b:0c:0d:0e:0f").unwrap(),
+            find_dhcp_lease_at(&path, "0a:0b:0c:0d:0e:0f", 100).unwrap(),
             Some("192.168.64.3".parse().unwrap())
+        );
+        assert_eq!(
+            find_dhcp_lease_at(&path, "0a:0b:0c:0d:0e:0f", 200).unwrap(),
+            None
         );
     }
 }

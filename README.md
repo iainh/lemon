@@ -81,6 +81,7 @@ lemon vm create dev \
 lemon vm run dev
 lemon service create vm dev-service --vm dev
 lemon service start dev-service
+lemon vm wait dev
 lemon vm ssh dev
 ```
 
@@ -101,7 +102,7 @@ lemon vm ssh dev -- sudo dnf install -y git
 ## Commands
 
 ```text
-lemon vm create|clone|list|run|ssh|delete
+lemon vm create|clone|list|run|wait|ssh|delete
 lemon container pull
 lemon service create|list|start|stop|status|delete|logs
 lemon doctor
@@ -122,7 +123,8 @@ take effect. launchd starts Lemon's hidden
 `exec(2)`. Signals and exit status therefore reach the real runtime directly.
 Stopping a VM service lets vfkit request a graceful guest shutdown before it
 falls back to a forced stop. Status output includes the process ID, run count,
-and last exit code reported by launchd.
+last exit code reported by launchd, and guest SSH readiness. Pass
+`--wait 120` to `lemon service start` to wait for VM readiness.
 
 Configuration is stored under `~/Library/Application Support/dev.lemon.lemon`
 and service logs are under Lemon's standard macOS data directory.

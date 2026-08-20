@@ -51,6 +51,12 @@ enum VmCommand {
     List,
     /// Run a VM in the foreground with an interactive serial console.
     Run { name: String },
+    /// Wait until a running VM has a current DHCP lease and accepts SSH connections.
+    Wait {
+        name: String,
+        #[arg(long, default_value_t = 120)]
+        timeout: u64,
+    },
     /// Log in to a running VM over SSH.
     Ssh {
         name: String,
@@ -128,7 +134,12 @@ enum ServiceCommand {
     /// List defined services and their launchd state.
     List,
     /// Install and start a service, or restart it if already loaded.
-    Start { name: String },
+    Start {
+        name: String,
+        /// Wait this many seconds for a VM service to accept SSH connections.
+        #[arg(long, value_name = "SECONDS")]
+        wait: Option<u64>,
+    },
     /// Stop and unload a service.
     Stop { name: String },
     /// Print whether launchd has the service loaded.
@@ -254,6 +265,10 @@ fn run_vm(command: VmCommand, store: &Store) -> Result<()> {
             if !status.success() {
                 bail!("VM exited with {status}");
             }
+        }
+        VmCommand::Wait { name, timeout } => {
+            let address = wait_for_vm(store, &name, timeout)?;
+            println!("{address}");
         }
         VmCommand::Ssh {
             name,
@@ -410,10 +425,20 @@ fn run_service(command: ServiceCommand, store: &Store) -> Result<()> {
                 );
             }
         }
-        ServiceCommand::Start { name } => {
+        ServiceCommand::Start { name, wait } => {
             let service = store.load_service(&name)?;
+            if wait.is_some() && !matches!(service.workload, Workload::Vm { .. }) {
+                bail!("--wait is only supported for VM services");
+            }
             launchd::start(store, &service)?;
             println!("Started service {name}");
+            if let Some(timeout) = wait {
+                let Workload::Vm { vm } = service.workload else {
+                    unreachable!()
+                };
+                let address = wait_for_vm(store, &vm, timeout)?;
+                println!("VM {vm} is ready at {address}");
+            }
         }
         ServiceCommand::Stop { name } => {
             store.load_service(&name)?;
@@ -425,12 +450,30 @@ fn run_service(command: ServiceCommand, store: &Store) -> Result<()> {
             }
         }
         ServiceCommand::Status { name } => {
-            store.load_service(&name)?;
+            let service = store.load_service(&name)?;
             let status = launchd::status(&name)?;
             println!("state: {}", status.state.as_str());
             println!("pid: {}", display_option(status.pid));
             println!("runs: {}", display_option(status.runs));
             println!("last exit code: {}", display_option(status.last_exit_code));
+            if status.state == launchd::JobState::Running {
+                if let Workload::Vm { vm } = service.workload {
+                    let config = store.load_vm(&vm)?;
+                    let address = config
+                        .mac_address
+                        .as_deref()
+                        .map(network::ssh_address)
+                        .transpose()?
+                        .flatten();
+                    println!(
+                        "guest: {}",
+                        address.map_or_else(
+                            || "starting".into(),
+                            |address| format!("ready ({address})")
+                        )
+                    );
+                }
+            }
         }
         ServiceCommand::Delete { name } => {
             let path = store.service_path(&name);
@@ -541,6 +584,12 @@ fn validate_guest_user(user: &str) -> Result<()> {
         );
     }
     Ok(())
+}
+
+fn wait_for_vm(store: &Store, name: &str, timeout: u64) -> Result<std::net::IpAddr> {
+    let vm = store.load_vm(name)?;
+    let mac_address = vm.mac_address.as_deref().context("VM has no MAC address")?;
+    network::wait_for_ssh(mac_address, Duration::from_secs(timeout))
 }
 
 fn display_option<T: std::fmt::Display>(value: Option<T>) -> String {
