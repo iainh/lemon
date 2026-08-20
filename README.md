@@ -122,8 +122,8 @@ cargo test
 
 An ignored end-to-end test discovers the current Fedora Server aarch64 raw
 image advertised at [fedoraproject.org/server/download](https://fedoraproject.org/server/download/),
-downloads and verifies it, defines and boots an EFI VM through Lemon, observes
-the running VM, and tears everything down:
+downloads and verifies it, provisions an SSH key with cloud-init, boots an EFI
+VM as a real LaunchAgent, logs in over SSH, and tears everything down:
 
 ```sh
 cargo test --test fedora_vm -- --ignored --nocapture

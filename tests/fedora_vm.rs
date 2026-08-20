@@ -3,7 +3,7 @@
 use std::fs::{self, File};
 use std::io::{self, BufReader, Read};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::Command;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -28,28 +28,23 @@ struct Release {
     sha256: String,
 }
 
-struct ChildGuard(Option<Child>);
-
-impl ChildGuard {
-    fn child_mut(&mut self) -> &mut Child {
-        self.0.as_mut().expect("child has already been reaped")
-    }
-
-    fn terminate(mut self) -> Result<()> {
-        let mut child = self.0.take().expect("child has already been reaped");
-        let kill_result = child.kill();
-        let wait_result = child.wait();
-        kill_result.context("failed to terminate Fedora VM")?;
-        wait_result.context("failed to reap Fedora VM")?;
-        Ok(())
-    }
+struct ServiceGuard {
+    lemon: PathBuf,
+    home: PathBuf,
+    active: bool,
 }
 
-impl Drop for ChildGuard {
+impl Drop for ServiceGuard {
     fn drop(&mut self) {
-        if let Some(child) = &mut self.0 {
-            let _ = child.kill();
-            let _ = child.wait();
+        if self.active {
+            let _ = Command::new(&self.lemon)
+                .env("HOME", &self.home)
+                .args(["service", "delete", SERVICE_NAME])
+                .output();
+            let _ = Command::new(&self.lemon)
+                .env("HOME", &self.home)
+                .args(["vm", "delete", VM_NAME])
+                .output();
         }
     }
 }
@@ -65,6 +60,9 @@ fn boots_current_fedora_server_aarch64_image() -> Result<()> {
         bail!("the Fedora aarch64 boot test requires Apple silicon");
     }
     require_tool("curl")?;
+    require_tool("launchctl")?;
+    require_tool("ssh")?;
+    require_tool("ssh-keygen")?;
     require_tool("vfkit")?;
 
     let temp = tempfile::tempdir().context("failed to create test directory")?;
@@ -119,6 +117,14 @@ fn boots_current_fedora_server_aarch64_image() -> Result<()> {
     output.sync_all()?;
 
     let lemon = env!("CARGO_BIN_EXE_lemon");
+    let private_key = temp.path().join("id_ed25519");
+    run_checked(
+        Command::new("ssh-keygen")
+            .args(["-q", "-t", "ed25519", "-N", "", "-f"])
+            .arg(&private_key),
+        "ssh-keygen",
+    )?;
+    let public_key = private_key.with_extension("pub");
     run_lemon(
         lemon,
         &home,
@@ -128,6 +134,8 @@ fn boots_current_fedora_server_aarch64_image() -> Result<()> {
             VM_NAME,
             "--disk",
             disk.to_str().context("test path is not UTF-8")?,
+            "--ssh-key",
+            public_key.to_str().context("test path is not UTF-8")?,
             "--cpus",
             "2",
             "--memory",
@@ -147,24 +155,40 @@ fn boots_current_fedora_server_aarch64_image() -> Result<()> {
             "--no-restart",
         ],
     )?;
+    let mut guard = ServiceGuard {
+        lemon: lemon.into(),
+        home: home.clone(),
+        active: true,
+    };
 
-    let stdout_path = temp.path().join("fedora.console.log");
-    let stderr_path = temp.path().join("vfkit.log");
-    let stdout = File::create(&stdout_path)?;
-    let stderr = File::create(&stderr_path)?;
-    let child = Command::new(lemon)
-        .env("HOME", &home)
-        .args(["run-service", SERVICE_NAME])
-        .stdin(Stdio::null())
-        .stdout(Stdio::from(stdout))
-        .stderr(Stdio::from(stderr))
-        .spawn()
-        .context("failed to start Lemon VM")?;
-    let mut child = ChildGuard(Some(child));
-
-    wait_for_vfkit_start(child.child_mut(), &stderr_path)?;
+    run_lemon(lemon, &home, ["service", "start", SERVICE_NAME])?;
+    let log_dir = home.join("Library/Application Support/dev.lemon.lemon/logs");
+    let stderr_path = log_dir.join(format!("{SERVICE_NAME}.error.log"));
+    wait_for_service_start(lemon, &home, &stderr_path)?;
     eprintln!("Fedora VM started; observing it for {BOOT_SETTLE_TIME:?}");
-    wait_while_running(child.child_mut(), BOOT_SETTLE_TIME, &stderr_path)?;
+    wait_while_service_running(lemon, &home, BOOT_SETTLE_TIME, &stderr_path)?;
+
+    run_lemon(
+        lemon,
+        &home,
+        [
+            "vm",
+            "ssh",
+            VM_NAME,
+            "-i",
+            private_key.to_str().context("test path is not UTF-8")?,
+            "--wait",
+            "180",
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            "StrictHostKeyChecking=no",
+            "-o",
+            "UserKnownHostsFile=/dev/null",
+            "--",
+            "true",
+        ],
+    )?;
 
     let efi_store = home
         .join("Library/Application Support/dev.lemon.lemon/vms")
@@ -182,9 +206,10 @@ fn boots_current_fedora_server_aarch64_image() -> Result<()> {
         bail!("EFI variable store is empty");
     }
 
-    child.terminate()?;
+    run_lemon(lemon, &home, ["service", "stop", SERVICE_NAME])?;
     run_lemon(lemon, &home, ["service", "delete", SERVICE_NAME])?;
     run_lemon(lemon, &home, ["vm", "delete", VM_NAME])?;
+    guard.active = false;
     let definition = home
         .join("Library/Application Support/dev.lemon.lemon/vms")
         .join(format!("{VM_NAME}.toml"));
@@ -243,16 +268,12 @@ fn run_lemon<const N: usize>(lemon: &str, home: &Path, args: [&str; N]) -> Resul
     Ok(())
 }
 
-fn wait_for_vfkit_start(child: &mut Child, log_path: &Path) -> Result<()> {
+fn wait_for_service_start(lemon: &str, home: &Path, log_path: &Path) -> Result<()> {
     let deadline = Instant::now() + START_TIMEOUT;
     while Instant::now() < deadline {
-        if let Some(status) = child.try_wait()? {
-            bail!(
-                "VM exited before starting with {status}:\n{}",
-                read_log(log_path)
-            );
-        }
-        if read_log(log_path).contains("virtual machine is running") {
+        if service_state(lemon, home)?.contains(": running")
+            && read_log(log_path).contains("virtual machine is running")
+        {
             return Ok(());
         }
         thread::sleep(Duration::from_millis(250));
@@ -263,16 +284,48 @@ fn wait_for_vfkit_start(child: &mut Child, log_path: &Path) -> Result<()> {
     )
 }
 
-fn wait_while_running(child: &mut Child, duration: Duration, log_path: &Path) -> Result<()> {
+fn wait_while_service_running(
+    lemon: &str,
+    home: &Path,
+    duration: Duration,
+    log_path: &Path,
+) -> Result<()> {
     let deadline = Instant::now() + duration;
     while Instant::now() < deadline {
-        if let Some(status) = child.try_wait()? {
+        let state = service_state(lemon, home)?;
+        if !state.contains(": running") {
             bail!(
-                "Fedora VM exited during boot observation with {status}:\n{}",
+                "Fedora VM stopped during boot observation ({state}):\n{}",
                 read_log(log_path)
             );
         }
         thread::sleep(Duration::from_millis(500));
+    }
+    Ok(())
+}
+
+fn service_state(lemon: &str, home: &Path) -> Result<String> {
+    let output = Command::new(lemon)
+        .env("HOME", home)
+        .args(["service", "status", SERVICE_NAME])
+        .output()
+        .context("failed to query Lemon service")?;
+    if !output.status.success() {
+        bail!(
+            "Lemon service status exited with {}:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+fn run_checked(command: &mut Command, description: &str) -> Result<()> {
+    let status = command
+        .status()
+        .with_context(|| format!("failed to execute {description}"))?;
+    if !status.success() {
+        bail!("{description} exited with {status}");
     }
     Ok(())
 }
