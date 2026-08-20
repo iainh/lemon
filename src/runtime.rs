@@ -2,10 +2,12 @@ use std::ffi::OsString;
 use std::fs::{File, OpenOptions};
 use std::net::IpAddr;
 use std::os::fd::AsRawFd;
+use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
 use std::process::{Command, ExitStatus};
 
 use anyhow::{Context, Result, bail};
+use sha2::{Digest, Sha256};
 
 use crate::config::{ServiceConfig, Store, VmBoot, VmConfig, Workload};
 
@@ -273,11 +275,26 @@ pub(crate) fn acquire_vm_locks(store: &Store, vm: &VmConfig) -> Result<Vec<File>
     disks.sort();
     disks.dedup();
     for disk in disks {
+        let identity = disk
+            .canonicalize()
+            .with_context(|| format!("failed to resolve VM disk {}", disk.display()))?;
+        let digest = Sha256::digest(identity.as_os_str().as_bytes());
+        let path = store
+            .data_dir
+            .join("disk-locks")
+            .join(format!("{digest:x}.lock"));
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).with_context(|| {
+                format!("failed to create disk lock directory {}", parent.display())
+            })?;
+        }
         let file = OpenOptions::new()
+            .create(true)
+            .truncate(false)
             .read(true)
             .write(true)
-            .open(disk)
-            .with_context(|| format!("failed to open VM disk {}", disk.display()))?;
+            .open(&path)
+            .with_context(|| format!("failed to open VM disk lock {}", path.display()))?;
         lock_file(&file).with_context(|| {
             format!(
                 "VM disk {} is already in use by another Lemon VM",
