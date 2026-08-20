@@ -1,4 +1,5 @@
 use std::ffi::OsString;
+use std::net::IpAddr;
 use std::path::Path;
 use std::process::{Command, ExitStatus};
 
@@ -138,6 +139,17 @@ pub fn exec_service(store: &Store, name: &str) -> Result<()> {
             .exec(),
     };
     Err(error).context("failed to execute service runtime")
+}
+
+pub fn exec_ssh(user: &str, address: IpAddr, identity: Option<&Path>) -> Result<()> {
+    use std::os::unix::process::CommandExt;
+
+    let mut command = Command::new("ssh");
+    if let Some(identity) = identity {
+        command.args(["-i".as_ref(), identity.as_os_str()]);
+    }
+    let error = command.arg(format!("{user}@{address}")).exec();
+    Err(error).context("failed to execute ssh")
 }
 
 fn prepare_vm(vm: &VmConfig) -> Result<()> {

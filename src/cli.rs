@@ -1,6 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use clap::{Args, Parser, Subcommand};
@@ -8,7 +9,7 @@ use clap::{Args, Parser, Subcommand};
 use crate::config::{
     ServiceConfig, Store, VmBoot, VmConfig, Workload, generate_mac_address, validate_name,
 };
-use crate::{launchd, runtime};
+use crate::{launchd, network, runtime};
 
 #[derive(Debug, Parser)]
 #[command(version, about, long_about = None, arg_required_else_help = true)]
@@ -48,6 +49,19 @@ enum VmCommand {
     List,
     /// Run a VM in the foreground with an interactive serial console.
     Run { name: String },
+    /// Log in to a running VM over SSH.
+    Ssh {
+        name: String,
+        /// Override the cloud-init guest account.
+        #[arg(long)]
+        user: Option<String>,
+        /// SSH private key. By default SSH uses its normal agent and key discovery.
+        #[arg(short = 'i', long, value_name = "PATH")]
+        identity: Option<PathBuf>,
+        /// Seconds to wait for a DHCP lease and the SSH port.
+        #[arg(long, default_value_t = 120)]
+        wait: u64,
+    },
     /// Delete a VM definition (disk images are preserved).
     Delete { name: String },
 }
@@ -212,6 +226,26 @@ fn run_vm(command: VmCommand, store: &Store) -> Result<()> {
             if !status.success() {
                 bail!("VM exited with {status}");
             }
+        }
+        VmCommand::Ssh {
+            name,
+            user,
+            identity,
+            wait,
+        } => {
+            let vm = store.load_vm(&name)?;
+            let mac_address = vm.mac_address.as_deref().context("VM has no MAC address")?;
+            let user = user
+                .or_else(|| {
+                    vm.cloud_init
+                        .as_ref()
+                        .map(|cloud_init| cloud_init.user.clone())
+                })
+                .context("VM has no configured SSH user; pass --user")?;
+            validate_guest_user(&user)?;
+            let identity = identity.as_deref().map(canonical_file).transpose()?;
+            let address = network::wait_for_ssh(mac_address, Duration::from_secs(wait))?;
+            runtime::exec_ssh(&user, address, identity.as_deref())?;
         }
         VmCommand::Delete { name } => {
             let path = store.vm_path(&name);
@@ -409,12 +443,17 @@ fn read_public_key(path: &Path) -> Result<String> {
 }
 
 fn validate_guest_user(user: &str) -> Result<()> {
-    if user.is_empty()
+    let mut characters = user.chars();
+    if !characters
+        .next()
+        .is_some_and(|character| character.is_ascii_alphanumeric() || character == '_')
         || !user
             .chars()
             .all(|character| character.is_ascii_alphanumeric() || matches!(character, '_' | '-'))
     {
-        bail!("invalid guest user {user:?}; use only letters, numbers, '_' or '-'");
+        bail!(
+            "invalid guest user {user:?}; use letters, numbers, '_' or '-', starting with a letter, number or '_'"
+        );
     }
     Ok(())
 }

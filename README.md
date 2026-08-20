@@ -65,17 +65,21 @@ lemon vm create dev \
 lemon vm run dev
 lemon service create vm dev-service --vm dev
 lemon service start dev-service
+lemon vm ssh dev
 ```
 
 Omit `--kernel` to use EFI boot. The first disk must contain a bootable EFI
 system; Lemon creates and persists the EFI variable store automatically.
 Supplying `--ssh-key` creates a `lemon` guest account through cloud-init; the
 guest image must include cloud-init. Use `--user` to choose another account.
+`lemon vm ssh` discovers the VM's NAT address from the macOS DHCP leases and
+waits for SSH to become ready. It uses your SSH agent and normal key discovery,
+or accepts a private key with `-i`.
 
 ## Commands
 
 ```text
-lemon vm create|list|run|delete
+lemon vm create|list|run|ssh|delete
 lemon container pull
 lemon service create|list|start|stop|status|delete|logs
 lemon doctor
