@@ -12,7 +12,7 @@ use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use xz2::read::XzDecoder;
 
-const SERVER_DOWNLOAD_PAGE: &str = "https://fedoraproject.org/server/download/";
+const CLOUD_DOWNLOAD_PAGE: &str = "https://fedoraproject.org/cloud/download/";
 const RELEASE_METADATA: &str = "https://fedoraproject.org/releases.json";
 const VM_NAME: &str = "fedora-integration";
 const SERVICE_NAME: &str = "fedora-integration-service";
@@ -25,6 +25,7 @@ struct Release {
     arch: String,
     link: String,
     variant: String,
+    subvariant: String,
     sha256: String,
 }
 
@@ -54,8 +55,8 @@ impl Drop for ServiceGuard {
 ///
 /// `cargo test --test fedora_vm -- --ignored --nocapture`
 #[test]
-#[ignore = "downloads and boots a full Fedora Server image"]
-fn boots_current_fedora_server_aarch64_image() -> Result<()> {
+#[ignore = "downloads and boots a full Fedora Cloud Base image"]
+fn boots_current_fedora_cloud_base_aarch64_image() -> Result<()> {
     if std::env::consts::ARCH != "aarch64" {
         bail!("the Fedora aarch64 boot test requires Apple silicon");
     }
@@ -69,9 +70,9 @@ fn boots_current_fedora_server_aarch64_image() -> Result<()> {
     let home = temp.path().join("home");
     fs::create_dir(&home)?;
 
-    let page_path = temp.path().join("server-download.html");
+    let page_path = temp.path().join("cloud-download.html");
     let metadata_path = temp.path().join("releases.json");
-    download(SERVER_DOWNLOAD_PAGE, &page_path)?;
+    download(CLOUD_DOWNLOAD_PAGE, &page_path)?;
     download(RELEASE_METADATA, &metadata_path)?;
 
     let releases: Vec<Release> = serde_json::from_reader(File::open(&metadata_path)?)?;
@@ -79,11 +80,12 @@ fn boots_current_fedora_server_aarch64_image() -> Result<()> {
         .iter()
         .filter(|release| {
             release.arch == "aarch64"
-                && release.variant == "Server"
+                && release.variant == "Cloud"
+                && release.subvariant == "Cloud_Base"
                 && release.link.ends_with(".aarch64.raw.xz")
         })
         .max_by_key(|release| release.version.parse::<u16>().unwrap_or_default())
-        .context("Fedora metadata contains no Server aarch64 raw.xz image")?;
+        .context("Fedora metadata contains no Cloud Base aarch64 raw.xz image")?;
     let image_name = release
         .link
         .rsplit('/')
@@ -91,7 +93,7 @@ fn boots_current_fedora_server_aarch64_image() -> Result<()> {
         .context("Fedora image URL has no filename")?;
     let page = fs::read_to_string(&page_path)?;
     if !page.contains(image_name) {
-        bail!("Fedora Server download page does not advertise {image_name}");
+        bail!("Fedora Cloud download page does not advertise {image_name}");
     }
 
     eprintln!(

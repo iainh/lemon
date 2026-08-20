@@ -163,8 +163,8 @@ Run the fast unit test suite with:
 cargo test
 ```
 
-An ignored end-to-end test discovers the current Fedora Server aarch64 raw
-image advertised at [fedoraproject.org/server/download](https://fedoraproject.org/server/download/),
+An ignored end-to-end test discovers the current Fedora Cloud Base aarch64 raw
+image advertised at [fedoraproject.org/cloud/download](https://fedoraproject.org/cloud/download/),
 downloads and verifies it, provisions an SSH key with cloud-init, boots an EFI
 VM as a real LaunchAgent, logs in over SSH, and tears everything down:
 
