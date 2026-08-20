@@ -130,9 +130,11 @@ last exit code reported by launchd, and guest SSH readiness. Pass
 Configuration is stored under `~/Library/Application Support/dev.lemon.lemon`
 and service logs are under Lemon's standard macOS data directory.
 
-Lemon serializes VM starts and prevents loaded VM services from reserving more
-than the host CPU count or 80% of physical memory. Set `LEMON_MAX_CPUS` or
-`LEMON_MAX_MEMORY_MIB` to use lower deployment-specific limits. Run
+Lemon serializes VM starts and prevents installed VM services from reserving
+more than the host CPU count or 80% of physical memory. Installed services
+remain reserved while temporarily stopped because they start again at login.
+Set `LEMON_MAX_CPUS` or `LEMON_MAX_MEMORY_MIB` to use lower deployment-specific
+limits. Run
 `lemon capacity` to show current allocations. `lemon service list`,
 `lemon service status`, and `lemon capacity` accept `--json` for monitoring and
 automation.

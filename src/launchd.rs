@@ -244,17 +244,22 @@ pub fn reconcile(store: &Store) -> Result<(usize, usize)> {
         .iter()
         .map(|service| service.name.as_str())
         .collect::<HashSet<_>>();
+    let installed = agent_names()?.into_iter().collect::<HashSet<_>>();
     let mut removed = 0;
-    for name in agent_names()? {
+    for name in &installed {
         if !configured.contains(name.as_str()) {
-            delete(&name)?;
+            delete(name)?;
             removed += 1;
         }
     }
-    for service in &services {
-        write_agent(store, service)?;
+    let mut refreshed = 0;
+    for service in services {
+        if installed.contains(&service.name) {
+            write_agent(store, &service)?;
+            refreshed += 1;
+        }
     }
-    Ok((services.len(), removed))
+    Ok((refreshed, removed))
 }
 
 fn agent_names() -> Result<Vec<String>> {

@@ -52,9 +52,11 @@ pub fn limits() -> Result<Resources> {
 pub fn allocated(store: &Store, exclude_service: Option<&str>) -> Result<Resources> {
     let mut allocated = Resources::default();
     for service in store.list_services()? {
-        if exclude_service == Some(&service.name)
-            || launchd::state(&service.name)? == JobState::Stopped
-        {
+        if exclude_service == Some(&service.name) {
+            continue;
+        }
+        let installed = launchd::agent_path(&service.name)?.exists();
+        if !installed && launchd::state(&service.name)? == JobState::Stopped {
             continue;
         }
         if let Workload::Vm { vm } = service.workload {
