@@ -104,7 +104,7 @@ lemon vm ssh dev -- sudo dnf install -y git
 ```text
 lemon vm create|clone|list|run|wait|ssh|delete
 lemon container pull
-lemon service create|list|start|stop|status|delete|logs
+lemon service create|list|start|stop|status|delete|logs|reconcile
 lemon capacity
 lemon doctor
 ```
@@ -136,6 +136,10 @@ than the host CPU count or 80% of physical memory. Set `LEMON_MAX_CPUS` or
 `lemon capacity` to show current allocations. `lemon service list`,
 `lemon service status`, and `lemon capacity` accept `--json` for monitoring and
 automation.
+
+`lemon service reconcile` atomically refreshes persisted LaunchAgents from
+service definitions and unloads/removes Lemon LaunchAgents whose definitions no
+longer exist. It does not start, stop, or restart configured services.
 
 Before starting or restarting a service, Lemon rotates logs of 10 MiB or larger
 and retains three generations. Set `LEMON_LOG_MAX_BYTES` to change the size

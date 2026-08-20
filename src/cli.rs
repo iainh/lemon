@@ -170,6 +170,8 @@ enum ServiceCommand {
     },
     /// Print the service's stdout and stderr log paths.
     Logs { name: String },
+    /// Refresh LaunchAgents from definitions and remove orphaned Lemon agents.
+    Reconcile,
 }
 
 #[derive(Debug, Subcommand)]
@@ -551,6 +553,10 @@ fn run_service(command: ServiceCommand, store: &Store) -> Result<()> {
             if let Some(path) = paths.get(2) {
                 println!("guest:  {}", path.display());
             }
+        }
+        ServiceCommand::Reconcile => {
+            let (refreshed, removed) = launchd::reconcile(store)?;
+            println!("Refreshed {refreshed} LaunchAgents; removed {removed} orphans");
         }
     }
     Ok(())

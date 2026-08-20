@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
@@ -237,6 +238,47 @@ pub fn delete(name: &str) -> Result<()> {
     Ok(())
 }
 
+pub fn reconcile(store: &Store) -> Result<(usize, usize)> {
+    let services = store.list_services()?;
+    let configured = services
+        .iter()
+        .map(|service| service.name.as_str())
+        .collect::<HashSet<_>>();
+    let mut removed = 0;
+    for name in agent_names()? {
+        if !configured.contains(name.as_str()) {
+            delete(&name)?;
+            removed += 1;
+        }
+    }
+    for service in &services {
+        write_agent(store, service)?;
+    }
+    Ok((services.len(), removed))
+}
+
+fn agent_names() -> Result<Vec<String>> {
+    let directory = agent_path("placeholder")?
+        .parent()
+        .expect("LaunchAgent has a parent")
+        .to_path_buf();
+    if !directory.exists() {
+        return Ok(Vec::new());
+    }
+    Ok(fs::read_dir(&directory)
+        .with_context(|| format!("failed to read {}", directory.display()))?
+        .filter_map(|entry| entry.ok().and_then(|entry| agent_name(&entry.path())))
+        .collect::<Vec<_>>())
+}
+
+fn agent_name(path: &Path) -> Option<String> {
+    path.file_name()?
+        .to_str()?
+        .strip_prefix(&format!("{LABEL_PREFIX}."))?
+        .strip_suffix(".plist")
+        .map(str::to_owned)
+}
+
 fn domain() -> String {
     // SAFETY: getuid has no preconditions and does not dereference memory.
     format!("gui/{}", unsafe { libc::getuid() })
@@ -274,6 +316,16 @@ mod tests {
         assert_eq!(status.pid, Some(123));
         assert_eq!(status.runs, Some(3));
         assert_eq!(status.last_exit_code, Some(1));
+    }
+
+    #[test]
+    fn recognizes_only_lemon_launch_agents() {
+        assert_eq!(
+            agent_name(Path::new("dev.lemon.web.plist")),
+            Some("web".into())
+        );
+        assert_eq!(agent_name(Path::new("com.example.web.plist")), None);
+        assert_eq!(agent_name(Path::new("dev.lemon.web.txt")), None);
     }
 
     #[test]
