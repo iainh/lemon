@@ -1,11 +1,13 @@
 use std::fs;
+use std::os::unix::fs::PermissionsExt;
+use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
 
 use anyhow::{Context, Result, bail};
 use plist::{Dictionary, Value};
 
-use crate::config::{LABEL_PREFIX, ServiceConfig, Store};
+use crate::config::{LABEL_PREFIX, ServiceConfig, Store, Workload};
 use crate::runtime::run_checked;
 
 pub fn label(name: &str) -> String {
@@ -27,7 +29,8 @@ pub fn write_agent(store: &Store, service: &ServiceConfig) -> Result<PathBuf> {
 
     let path = agent_path(&service.name)?;
     fs::create_dir_all(path.parent().expect("launch agent has a parent"))?;
-    let job = job_dictionary(store, service, executable);
+    let runtime = runtime_executable(service)?;
+    let job = job_dictionary(store, service, executable, runtime);
     let file =
         fs::File::create(&path).with_context(|| format!("failed to create {}", path.display()))?;
     plist::to_writer_xml(file, &Value::Dictionary(job))
@@ -35,7 +38,12 @@ pub fn write_agent(store: &Store, service: &ServiceConfig) -> Result<PathBuf> {
     Ok(path)
 }
 
-fn job_dictionary(store: &Store, service: &ServiceConfig, executable: PathBuf) -> Dictionary {
+fn job_dictionary(
+    store: &Store,
+    service: &ServiceConfig,
+    executable: PathBuf,
+    runtime: PathBuf,
+) -> Dictionary {
     let log_dir = store.log_dir();
     let mut job = Dictionary::new();
     job.insert("Label".into(), Value::String(label(&service.name)));
@@ -51,17 +59,29 @@ fn job_dictionary(store: &Store, service: &ServiceConfig, executable: PathBuf) -
     job.insert("KeepAlive".into(), Value::Boolean(service.restart));
     job.insert("ProcessType".into(), Value::String("Background".into()));
     job.insert("ThrottleInterval".into(), Value::Integer(5.into()));
+    let mut environment = Dictionary::new();
+    environment.insert(
+        "LEMON_CONFIG_DIR".into(),
+        Value::String(store.config_dir.display().to_string()),
+    );
+    environment.insert(
+        "LEMON_DATA_DIR".into(),
+        Value::String(store.data_dir.display().to_string()),
+    );
+    environment.insert(
+        "LEMON_RUNTIME".into(),
+        Value::String(runtime.display().to_string()),
+    );
     if let Some(path) = std::env::var_os("PATH") {
-        let mut environment = Dictionary::new();
         environment.insert(
             "PATH".into(),
             Value::String(path.to_string_lossy().into_owned()),
         );
-        job.insert(
-            "EnvironmentVariables".into(),
-            Value::Dictionary(environment),
-        );
     }
+    job.insert(
+        "EnvironmentVariables".into(),
+        Value::Dictionary(environment),
+    );
     job.insert(
         "StandardOutPath".into(),
         Value::String(
@@ -81,6 +101,28 @@ fn job_dictionary(store: &Store, service: &ServiceConfig, executable: PathBuf) -
         ),
     );
     job
+}
+
+fn runtime_executable(service: &ServiceConfig) -> Result<PathBuf> {
+    let name = match service.workload {
+        Workload::Vm { .. } => "vfkit",
+        Workload::Container { .. } => "container",
+    };
+    find_executable(name)
+        .with_context(|| format!("required runtime {name:?} was not found in PATH"))
+}
+
+fn find_executable(name: &str) -> Option<PathBuf> {
+    std::env::var_os("PATH").and_then(|path| {
+        std::env::split_paths(&path)
+            .map(|directory| directory.join(name))
+            .find(|candidate| is_executable(candidate))
+    })
+}
+
+fn is_executable(path: &Path) -> bool {
+    path.metadata()
+        .is_ok_and(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0)
 }
 
 pub fn start(store: &Store, service: &ServiceConfig) -> Result<()> {
@@ -173,11 +215,25 @@ mod tests {
                 command: vec![],
             },
         };
-        let job = job_dictionary(&store, &service, "/usr/local/bin/lemon".into());
+        let job = job_dictionary(
+            &store,
+            &service,
+            "/usr/local/bin/lemon".into(),
+            "/usr/local/bin/container".into(),
+        );
         assert_eq!(job["Label"].as_string(), Some("dev.lemon.web"));
         assert_eq!(job["KeepAlive"].as_boolean(), Some(true));
         let args = job["ProgramArguments"].as_array().unwrap();
         assert_eq!(args[1].as_string(), Some("run-service"));
         assert_eq!(args[2].as_string(), Some("web"));
+        let environment = job["EnvironmentVariables"].as_dictionary().unwrap();
+        assert_eq!(
+            environment["LEMON_RUNTIME"].as_string(),
+            Some("/usr/local/bin/container")
+        );
+        assert_eq!(
+            environment["LEMON_CONFIG_DIR"].as_string(),
+            Some("/tmp/config")
+        );
     }
 }

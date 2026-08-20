@@ -73,6 +73,19 @@ pub struct Store {
 
 impl Store {
     pub fn discover() -> Result<Self> {
+        match (
+            std::env::var_os("LEMON_CONFIG_DIR"),
+            std::env::var_os("LEMON_DATA_DIR"),
+        ) {
+            (Some(config_dir), Some(data_dir)) => {
+                return Ok(Self {
+                    config_dir: config_dir.into(),
+                    data_dir: data_dir.into(),
+                });
+            }
+            (None, None) => {}
+            _ => bail!("LEMON_CONFIG_DIR and LEMON_DATA_DIR must be set together"),
+        }
         let dirs = ProjectDirs::from("dev", "lemon", "lemon")
             .context("could not determine the current user's home directory")?;
         Ok(Self {

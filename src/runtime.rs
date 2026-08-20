@@ -127,6 +127,7 @@ pub fn exec_service(store: &Store, name: &str) -> Result<()> {
     use std::os::unix::process::CommandExt;
 
     let service = store.load_service(name)?;
+    let runtime = std::env::var_os("LEMON_RUNTIME");
     let error = match &service.workload {
         Workload::Vm { vm } => {
             let config = store.load_vm(vm)?;
@@ -135,13 +136,15 @@ pub fn exec_service(store: &Store, name: &str) -> Result<()> {
             preserve_lock_across_exec(&lock)?;
             let log_path = store.log_dir().join(format!("vm-{vm}.log"));
             std::fs::create_dir_all(store.log_dir())?;
-            Command::new("vfkit")
+            Command::new(runtime.as_deref().unwrap_or_else(|| "vfkit".as_ref()))
                 .args(vfkit_args(&config, false, &log_path))
                 .exec()
         }
-        Workload::Container { .. } => Command::new("container")
-            .args(container_args(&service)?)
-            .exec(),
+        Workload::Container { .. } => {
+            Command::new(runtime.as_deref().unwrap_or_else(|| "container".as_ref()))
+                .args(container_args(&service)?)
+                .exec()
+        }
     };
     Err(error).context("failed to execute service runtime")
 }
