@@ -61,6 +61,12 @@ enum VmCommand {
         /// Seconds to wait for a DHCP lease and the SSH port.
         #[arg(long, default_value_t = 120)]
         wait: u64,
+        /// An ssh_config option such as StrictHostKeyChecking=accept-new; repeat as needed.
+        #[arg(short = 'o', long = "ssh-option", value_name = "OPTION")]
+        ssh_options: Vec<String>,
+        /// Optional command and arguments to run in the guest.
+        #[arg(last = true)]
+        command: Vec<String>,
     },
     /// Delete a VM definition (disk images are preserved).
     Delete { name: String },
@@ -232,6 +238,8 @@ fn run_vm(command: VmCommand, store: &Store) -> Result<()> {
             user,
             identity,
             wait,
+            ssh_options,
+            command,
         } => {
             let vm = store.load_vm(&name)?;
             let mac_address = vm.mac_address.as_deref().context("VM has no MAC address")?;
@@ -245,7 +253,7 @@ fn run_vm(command: VmCommand, store: &Store) -> Result<()> {
             validate_guest_user(&user)?;
             let identity = identity.as_deref().map(canonical_file).transpose()?;
             let address = network::wait_for_ssh(mac_address, Duration::from_secs(wait))?;
-            runtime::exec_ssh(&user, address, identity.as_deref())?;
+            runtime::exec_ssh(&user, address, identity.as_deref(), &ssh_options, &command)?;
         }
         VmCommand::Delete { name } => {
             if let Some(service) = store

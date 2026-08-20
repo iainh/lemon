@@ -176,14 +176,26 @@ fn ensure_cloud_init_support(executable: &Path) -> Result<()> {
     Ok(())
 }
 
-pub fn exec_ssh(user: &str, address: IpAddr, identity: Option<&Path>) -> Result<()> {
+pub fn exec_ssh(
+    user: &str,
+    address: IpAddr,
+    identity: Option<&Path>,
+    options: &[String],
+    remote_command: &[String],
+) -> Result<()> {
     use std::os::unix::process::CommandExt;
 
     let mut command = Command::new("ssh");
     if let Some(identity) = identity {
         command.args(["-i".as_ref(), identity.as_os_str()]);
     }
-    let error = command.arg(format!("{user}@{address}")).exec();
+    for option in options {
+        command.args(["-o", option]);
+    }
+    let error = command
+        .arg(format!("{user}@{address}"))
+        .args(remote_command)
+        .exec();
     Err(error).context("failed to execute ssh")
 }
 
