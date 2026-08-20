@@ -9,6 +9,7 @@ use plist::{Dictionary, Value};
 
 use crate::config::{LABEL_PREFIX, ServiceConfig, Store, Workload};
 use crate::fsutil::atomic_write;
+use crate::logs;
 use crate::runtime::run_checked;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -152,7 +153,6 @@ fn is_executable(path: &Path) -> bool {
 }
 
 pub fn start(store: &Store, service: &ServiceConfig) -> Result<()> {
-    let path = write_agent(store, service)?;
     let target = format!("{}/{}", domain(), label(&service.name));
     if state(&service.name)? != JobState::Stopped {
         run_checked(
@@ -160,6 +160,8 @@ pub fn start(store: &Store, service: &ServiceConfig) -> Result<()> {
             "launchctl bootout",
         )?;
     }
+    logs::rotate_service(store, service)?;
+    let path = write_agent(store, service)?;
     run_checked(
         Command::new("launchctl")
             .arg("bootstrap")

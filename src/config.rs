@@ -112,6 +112,17 @@ impl Store {
         self.data_dir.join("logs")
     }
 
+    pub fn service_log_paths(&self, service: &ServiceConfig) -> Vec<PathBuf> {
+        let mut paths = vec![
+            self.log_dir().join(format!("{}.log", service.name)),
+            self.log_dir().join(format!("{}.error.log", service.name)),
+        ];
+        if let Workload::Vm { vm } = &service.workload {
+            paths.push(self.log_dir().join(format!("vm-{vm}.log")));
+        }
+        paths
+    }
+
     pub fn efi_store_path(&self, name: &str) -> PathBuf {
         self.vm_data_dir(name).join("efi-vars")
     }

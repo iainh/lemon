@@ -135,6 +135,10 @@ than the host CPU count or 80% of physical memory. Set `LEMON_MAX_CPUS` or
 `LEMON_MAX_MEMORY_MIB` to use lower deployment-specific limits. Run
 `lemon capacity` to show current allocations.
 
+Before starting or restarting a service, Lemon rotates logs of 10 MiB or larger
+and retains three generations. Set `LEMON_LOG_MAX_BYTES` to change the size
+threshold. `lemon service delete --purge-logs` removes current and rotated logs.
+
 ## Status
 
 This initial release supports per-user services, Linux direct-kernel or EFI

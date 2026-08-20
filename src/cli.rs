@@ -10,7 +10,7 @@ use crate::capacity;
 use crate::config::{
     ServiceConfig, Store, VmBoot, VmConfig, Workload, generate_mac_address, validate_name,
 };
-use crate::{launchd, network, runtime};
+use crate::{launchd, logs, network, runtime};
 
 #[derive(Debug, Parser)]
 #[command(version, about, long_about = None, arg_required_else_help = true)]
@@ -148,7 +148,12 @@ enum ServiceCommand {
     /// Print whether launchd has the service loaded.
     Status { name: String },
     /// Delete a service definition and its LaunchAgent.
-    Delete { name: String },
+    Delete {
+        name: String,
+        /// Also delete current and rotated service logs.
+        #[arg(long)]
+        purge_logs: bool,
+    },
     /// Print the service's stdout and stderr log paths.
     Logs { name: String },
 }
@@ -481,30 +486,26 @@ fn run_service(command: ServiceCommand, store: &Store) -> Result<()> {
                 }
             }
         }
-        ServiceCommand::Delete { name } => {
+        ServiceCommand::Delete { name, purge_logs } => {
             let path = store.service_path(&name);
             if !path.exists() {
                 bail!("service {name:?} does not exist");
             }
+            let service = store.load_service(&name)?;
             launchd::delete(&name)?;
+            if purge_logs {
+                logs::purge_service(store, &service)?;
+            }
             fs::remove_file(path)?;
             println!("Deleted service {name}");
         }
         ServiceCommand::Logs { name } => {
             let service = store.load_service(&name)?;
-            println!(
-                "stdout: {}",
-                store.log_dir().join(format!("{name}.log")).display()
-            );
-            println!(
-                "stderr: {}",
-                store.log_dir().join(format!("{name}.error.log")).display()
-            );
-            if let Workload::Vm { vm } = service.workload {
-                println!(
-                    "guest:  {}",
-                    store.log_dir().join(format!("vm-{vm}.log")).display()
-                );
+            let paths = store.service_log_paths(&service);
+            println!("stdout: {}", paths[0].display());
+            println!("stderr: {}", paths[1].display());
+            if let Some(path) = paths.get(2) {
+                println!("guest:  {}", path.display());
             }
         }
     }
