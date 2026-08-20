@@ -135,22 +135,24 @@ impl Store {
             .with_context(|| format!("failed to create {}", directory.display()))?;
         let user_data = directory.join("user-data");
         let meta_data = directory.join("meta-data");
-        fs::write(
+        atomic_write(
             &user_data,
             format!(
                 "#cloud-config\nusers:\n  - name: {}\n    lock_passwd: true\n    shell: /bin/sh\n    sudo: ALL=(ALL) NOPASSWD:ALL\n    ssh_authorized_keys:\n      - {}\nssh_pwauth: false\ndisable_root: true\n",
                 yaml_string(user),
                 yaml_string(public_key),
-            ),
+            )
+            .as_bytes(),
         )
         .with_context(|| format!("failed to write {}", user_data.display()))?;
-        fs::write(
+        atomic_write(
             &meta_data,
             format!(
                 "instance-id: {}\nlocal-hostname: {}\n",
                 yaml_string(&format!("lemon-{vm_name}")),
                 yaml_string(vm_name),
-            ),
+            )
+            .as_bytes(),
         )
         .with_context(|| format!("failed to write {}", meta_data.display()))?;
         Ok(CloudInitConfig {
@@ -324,6 +326,8 @@ fn read_dir_toml<T: DeserializeOwned>(dir: &Path) -> Result<Vec<T>> {
 
 #[cfg(test)]
 mod tests {
+    use std::os::unix::fs::PermissionsExt;
+
     use super::*;
 
     #[test]
@@ -356,6 +360,10 @@ mod tests {
         assert!(user_data.contains("name: 'lemon'"));
         assert!(user_data.contains("ssh-ed25519 AAAA''test key"));
         assert_eq!(config.user, "lemon");
+        assert_eq!(
+            fs::metadata(config.meta_data).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
     }
 
     #[test]
