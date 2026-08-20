@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use clap::{Args, Parser, Subcommand};
+use serde::Serialize;
 
 use crate::capacity;
 use crate::config::{
@@ -39,7 +40,11 @@ enum CommandGroup {
     /// Check whether Lemon's native runtime dependencies are available.
     Doctor,
     /// Show VM resource limits and current launchd service allocations.
-    Capacity,
+    Capacity {
+        /// Print machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
     #[command(hide = true)]
     RunService { name: String },
 }
@@ -135,7 +140,11 @@ enum ServiceCommand {
         workload: CreateService,
     },
     /// List defined services and their launchd state.
-    List,
+    List {
+        /// Print machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
     /// Install and start a service, or restart it if already loaded.
     Start {
         name: String,
@@ -146,7 +155,12 @@ enum ServiceCommand {
     /// Stop and unload a service.
     Stop { name: String },
     /// Print whether launchd has the service loaded.
-    Status { name: String },
+    Status {
+        name: String,
+        /// Print machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
     /// Delete a service definition and its LaunchAgent.
     Delete {
         name: String,
@@ -200,7 +214,7 @@ impl Cli {
             CommandGroup::Container { command } => run_container(command),
             CommandGroup::Service { command } => run_service(command, &store),
             CommandGroup::Doctor => doctor(&store),
-            CommandGroup::Capacity => show_capacity(&store),
+            CommandGroup::Capacity { json } => show_capacity(&store, json),
             CommandGroup::RunService { name } => runtime::exec_service(&store, &name),
         }
     }
@@ -414,24 +428,38 @@ fn run_service(command: ServiceCommand, store: &Store) -> Result<()> {
                 service.name, service.name
             );
         }
-        ServiceCommand::List => {
-            println!("NAME\tTYPE\tSTATE\tPID\tRESTARTS\tLAST-EXIT\tRESTART");
+        ServiceCommand::List { json } => {
+            let mut rows = Vec::new();
             for service in store.list_services()? {
-                let kind = match service.workload {
-                    Workload::Vm { .. } => "vm",
-                    Workload::Container { .. } => "container",
-                };
                 let status = launchd::status(&service.name)?;
-                println!(
-                    "{}\t{}\t{}\t{}\t{}\t{}\t{}",
-                    service.name,
-                    kind,
-                    status.state.as_str(),
-                    display_option(status.pid),
-                    display_option(status.runs.map(|runs| runs.saturating_sub(1))),
-                    display_option(status.last_exit_code),
-                    service.restart
-                );
+                rows.push(ServiceStatusRow {
+                    name: service.name,
+                    kind: workload_kind(&service.workload),
+                    state: status.state.as_str(),
+                    pid: status.pid,
+                    runs: status.runs,
+                    restarts: status.runs.map(|runs| runs.saturating_sub(1)),
+                    last_exit_code: status.last_exit_code,
+                    restart: service.restart,
+                    guest: None,
+                });
+            }
+            if json {
+                println!("{}", serde_json::to_string_pretty(&rows)?);
+            } else {
+                println!("NAME\tTYPE\tSTATE\tPID\tRESTARTS\tLAST-EXIT\tRESTART");
+                for row in rows {
+                    println!(
+                        "{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                        row.name,
+                        row.kind,
+                        row.state,
+                        display_option(row.pid),
+                        display_option(row.restarts),
+                        display_option(row.last_exit_code),
+                        row.restart
+                    );
+                }
             }
         }
         ServiceCommand::Start { name, wait } => {
@@ -459,29 +487,46 @@ fn run_service(command: ServiceCommand, store: &Store) -> Result<()> {
                 println!("Service {name} is already stopped");
             }
         }
-        ServiceCommand::Status { name } => {
+        ServiceCommand::Status { name, json } => {
             let service = store.load_service(&name)?;
             let status = launchd::status(&name)?;
-            println!("state: {}", status.state.as_str());
-            println!("pid: {}", display_option(status.pid));
-            println!("runs: {}", display_option(status.runs));
-            println!("last exit code: {}", display_option(status.last_exit_code));
+            let mut guest = None;
             if status.state == launchd::JobState::Running {
-                if let Workload::Vm { vm } = service.workload {
-                    let config = store.load_vm(&vm)?;
+                if let Workload::Vm { vm } = &service.workload {
+                    let config = store.load_vm(vm)?;
                     let address = config
                         .mac_address
                         .as_deref()
                         .map(network::ssh_address)
                         .transpose()?
                         .flatten();
-                    println!(
-                        "guest: {}",
-                        address.map_or_else(
+                    guest =
+                        Some(address.map_or_else(
                             || "starting".into(),
-                            |address| format!("ready ({address})")
-                        )
-                    );
+                            |address| format!("ready ({address})"),
+                        ));
+                }
+            }
+            let row = ServiceStatusRow {
+                name: service.name,
+                kind: workload_kind(&service.workload),
+                state: status.state.as_str(),
+                pid: status.pid,
+                runs: status.runs,
+                restarts: status.runs.map(|runs| runs.saturating_sub(1)),
+                last_exit_code: status.last_exit_code,
+                restart: service.restart,
+                guest,
+            };
+            if json {
+                println!("{}", serde_json::to_string_pretty(&row)?);
+            } else {
+                println!("state: {}", row.state);
+                println!("pid: {}", display_option(row.pid));
+                println!("runs: {}", display_option(row.runs));
+                println!("last exit code: {}", display_option(row.last_exit_code));
+                if let Some(guest) = row.guest {
+                    println!("guest: {guest}");
                 }
             }
         }
@@ -531,9 +576,27 @@ fn doctor(store: &Store) -> Result<()> {
     Ok(())
 }
 
-fn show_capacity(store: &Store) -> Result<()> {
+fn show_capacity(store: &Store, json: bool) -> Result<()> {
     let limits = capacity::limits()?;
     let allocated = capacity::allocated(store, None)?;
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "cpus": {
+                    "allocated": allocated.cpus,
+                    "limit": limits.cpus,
+                    "available": limits.cpus.saturating_sub(allocated.cpus),
+                },
+                "memory_mib": {
+                    "allocated": allocated.memory_mib,
+                    "limit": limits.memory_mib,
+                    "available": limits.memory_mib.saturating_sub(allocated.memory_mib),
+                }
+            }))?
+        );
+        return Ok(());
+    }
     println!("RESOURCE\tALLOCATED\tLIMIT\tAVAILABLE");
     println!(
         "cpus\t{}\t{}\t{}",
@@ -625,4 +688,25 @@ fn wait_for_vm(store: &Store, name: &str, timeout: u64) -> Result<std::net::IpAd
 
 fn display_option<T: std::fmt::Display>(value: Option<T>) -> String {
     value.map_or_else(|| "-".into(), |value| value.to_string())
+}
+
+fn workload_kind(workload: &Workload) -> &'static str {
+    match workload {
+        Workload::Vm { .. } => "vm",
+        Workload::Container { .. } => "container",
+    }
+}
+
+#[derive(Serialize)]
+struct ServiceStatusRow {
+    name: String,
+    #[serde(rename = "type")]
+    kind: &'static str,
+    state: &'static str,
+    pid: Option<u32>,
+    runs: Option<u64>,
+    restarts: Option<u64>,
+    last_exit_code: Option<i32>,
+    restart: bool,
+    guest: Option<String>,
 }

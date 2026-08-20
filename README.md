@@ -133,7 +133,9 @@ and service logs are under Lemon's standard macOS data directory.
 Lemon serializes VM starts and prevents loaded VM services from reserving more
 than the host CPU count or 80% of physical memory. Set `LEMON_MAX_CPUS` or
 `LEMON_MAX_MEMORY_MIB` to use lower deployment-specific limits. Run
-`lemon capacity` to show current allocations.
+`lemon capacity` to show current allocations. `lemon service list`,
+`lemon service status`, and `lemon capacity` accept `--json` for monitoring and
+automation.
 
 Before starting or restarting a service, Lemon rotates logs of 10 MiB or larger
 and retains three generations. Set `LEMON_LOG_MAX_BYTES` to change the size
