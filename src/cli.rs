@@ -199,7 +199,7 @@ impl Cli {
             CommandGroup::Vm { command } => run_vm(command, &store),
             CommandGroup::Container { command } => run_container(command),
             CommandGroup::Service { command } => run_service(command, &store),
-            CommandGroup::Doctor => doctor(),
+            CommandGroup::Doctor => doctor(&store),
             CommandGroup::Capacity => show_capacity(&store),
             CommandGroup::RunService { name } => runtime::exec_service(&store, &name),
         }
@@ -241,7 +241,6 @@ fn run_vm(command: VmCommand, store: &Store) -> Result<()> {
                 cloud_init,
                 boot,
                 disks,
-                managed_storage: false,
             })?;
             println!("Created VM {}", args.name);
         }
@@ -512,7 +511,7 @@ fn run_service(command: ServiceCommand, store: &Store) -> Result<()> {
     Ok(())
 }
 
-fn doctor() -> Result<()> {
+fn doctor(store: &Store) -> Result<()> {
     println!("Lemon runtime check");
     check_tool("launchctl", "built into macOS");
     check_vfkit();
@@ -522,6 +521,12 @@ fn doctor() -> Result<()> {
     println!("  {:<12} {arch}", "architecture");
     if arch != "aarch64" {
         println!("               warning: Apple container requires Apple silicon");
+    }
+    for vm in store.list_vms()? {
+        match runtime::validate_vm(&vm) {
+            Ok(()) => println!("  vm {:<9} ready", vm.name),
+            Err(error) => println!("  vm {:<9} invalid: {error}", vm.name),
+        }
     }
     Ok(())
 }

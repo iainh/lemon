@@ -112,6 +112,7 @@ pub fn container_args(service: &ServiceConfig) -> Result<Vec<OsString>> {
 
 pub fn run_vm(store: &Store, name: &str, interactive: bool) -> Result<ExitStatus> {
     let vm = store.load_vm(name)?;
+    validate_vm(&vm)?;
     if vm.cloud_init.is_some() {
         ensure_cloud_init_support(Path::new("vfkit"))?;
     }
@@ -134,6 +135,7 @@ pub fn exec_service(store: &Store, name: &str) -> Result<()> {
     let error = match &service.workload {
         Workload::Vm { vm } => {
             let config = store.load_vm(vm)?;
+            validate_vm(&config)?;
             let runtime = runtime.as_deref().unwrap_or_else(|| "vfkit".as_ref());
             if config.cloud_init.is_some() {
                 ensure_cloud_init_support(Path::new(runtime))?;
@@ -206,6 +208,36 @@ fn prepare_vm(vm: &VmConfig) -> Result<()> {
                 format!("failed to create EFI state directory {}", parent.display())
             })?;
         }
+    }
+    Ok(())
+}
+
+pub fn validate_vm(vm: &VmConfig) -> Result<()> {
+    for disk in &vm.disks {
+        validate_regular_file(disk, "VM disk")?;
+    }
+    match &vm.boot {
+        VmBoot::Linux { kernel, initrd, .. } => {
+            validate_regular_file(kernel, "Linux kernel")?;
+            if let Some(initrd) = initrd {
+                validate_regular_file(initrd, "Linux initrd")?;
+            }
+        }
+        VmBoot::Efi { .. } => {}
+    }
+    if let Some(cloud_init) = &vm.cloud_init {
+        validate_regular_file(&cloud_init.user_data, "cloud-init user data")?;
+        validate_regular_file(&cloud_init.meta_data, "cloud-init metadata")?;
+    }
+    Ok(())
+}
+
+fn validate_regular_file(path: &Path, description: &str) -> Result<()> {
+    if !path.metadata().is_ok_and(|metadata| metadata.is_file()) {
+        bail!(
+            "{description} is missing or is not a file: {}",
+            path.display()
+        );
     }
     Ok(())
 }
@@ -352,7 +384,6 @@ mod tests {
                 variable_store: temp.path().join(format!("{name}.efi")),
             },
             disks: vec![disk.clone()],
-            managed_storage: false,
         };
 
         let _locks = acquire_vm_locks(&store, &vm("first")).unwrap();
@@ -360,5 +391,35 @@ mod tests {
 
         assert!(error.to_string().contains("already in use"));
         assert!(error.to_string().contains("disk.raw"));
+    }
+
+    #[test]
+    fn validates_all_vm_runtime_files() {
+        let temp = tempfile::tempdir().unwrap();
+        let disk = temp.path().join("disk.raw");
+        let kernel = temp.path().join("kernel");
+        std::fs::write(&disk, []).unwrap();
+        std::fs::write(&kernel, []).unwrap();
+        let mut vm = VmConfig {
+            name: "dev".into(),
+            cpus: 1,
+            memory_mib: 512,
+            mac_address: None,
+            cloud_init: None,
+            boot: VmBoot::Linux {
+                kernel,
+                initrd: None,
+                cmdline: String::new(),
+            },
+            disks: vec![disk],
+        };
+        assert!(validate_vm(&vm).is_ok());
+        vm.disks[0] = temp.path().join("missing.raw");
+        assert!(
+            validate_vm(&vm)
+                .unwrap_err()
+                .to_string()
+                .contains("VM disk")
+        );
     }
 }

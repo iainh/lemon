@@ -20,7 +20,7 @@ current user's standard macOS Library directories.
 - Apple `container` and macOS 26 for containers. Install a signed release, then
   initialize it once with `container system start`.
 
-Run `lemon doctor` to check the local tools.
+Run `lemon doctor` to check the local tools and every VM's runtime files.
 
 ## Install
 

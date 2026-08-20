@@ -20,8 +20,6 @@ pub struct VmConfig {
     pub cloud_init: Option<CloudInitConfig>,
     pub boot: VmBoot,
     pub disks: Vec<PathBuf>,
-    #[serde(default)]
-    pub managed_storage: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -244,7 +242,6 @@ impl Store {
                 cloud_init,
                 boot,
                 disks,
-                managed_storage: true,
             })
         })();
         if result.is_err() {
@@ -401,14 +398,12 @@ mod tests {
                 cmdline: "console=hvc0".into(),
             },
             disks: vec![disk],
-            managed_storage: false,
         };
 
         let clone = store.clone_vm(&source, "clone").unwrap();
 
         assert_eq!(fs::read(&clone.disks[0]).unwrap(), b"source disk");
         assert_ne!(clone.mac_address, source.mac_address);
-        assert!(clone.managed_storage);
         let metadata = fs::read_to_string(clone.cloud_init.unwrap().meta_data).unwrap();
         assert!(metadata.contains("lemon-clone"));
         assert!(metadata.contains("local-hostname: 'clone'"));
