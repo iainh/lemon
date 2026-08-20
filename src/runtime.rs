@@ -168,7 +168,7 @@ fn prepare_vm(vm: &VmConfig) -> Result<()> {
     Ok(())
 }
 
-fn acquire_vm_lock(store: &Store, name: &str) -> Result<File> {
+pub(crate) fn acquire_vm_lock(store: &Store, name: &str) -> Result<File> {
     let path = store.vm_lock_path(name);
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)

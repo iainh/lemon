@@ -248,7 +248,21 @@ fn run_vm(command: VmCommand, store: &Store) -> Result<()> {
             runtime::exec_ssh(&user, address, identity.as_deref())?;
         }
         VmCommand::Delete { name } => {
+            if let Some(service) = store
+                .list_services()?
+                .into_iter()
+                .find(|service| matches!(&service.workload, Workload::Vm { vm } if vm == &name))
+            {
+                bail!(
+                    "cannot delete VM {name:?}; service {:?} still references it",
+                    service.name
+                );
+            }
             let path = store.vm_path(&name);
+            let _lock = path
+                .exists()
+                .then(|| runtime::acquire_vm_lock(store, &name))
+                .transpose()?;
             fs::remove_file(&path)
                 .with_context(|| format!("VM {name:?} does not exist ({})", path.display()))?;
             println!("Deleted VM {name}; disk images were preserved");
