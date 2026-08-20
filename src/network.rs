@@ -1,4 +1,5 @@
 use std::fs;
+use std::io::Read;
 use std::net::{IpAddr, SocketAddr, TcpStream};
 use std::path::Path;
 use std::thread;
@@ -34,11 +35,21 @@ pub fn ssh_address(mac_address: &str) -> Result<Option<IpAddr>> {
         return Ok(None);
     };
     let socket = SocketAddr::new(address, 22);
-    Ok(
-        TcpStream::connect_timeout(&socket, Duration::from_millis(500))
-            .is_ok()
-            .then_some(address),
-    )
+    let Ok(mut stream) = TcpStream::connect_timeout(&socket, Duration::from_millis(500)) else {
+        return Ok(None);
+    };
+    stream.set_read_timeout(Some(Duration::from_millis(500)))?;
+    let mut banner = [0_u8; 255];
+    let Ok(length) = stream.read(&mut banner) else {
+        return Ok(None);
+    };
+    Ok(has_ssh_banner(&banner[..length]).then_some(address))
+}
+
+fn has_ssh_banner(bytes: &[u8]) -> bool {
+    bytes
+        .split(|byte| *byte == b'\n')
+        .any(|line| line.starts_with(b"SSH-"))
 }
 
 fn find_dhcp_lease(path: &Path, mac_address: &str) -> Result<Option<IpAddr>> {
@@ -139,5 +150,12 @@ mod tests {
             find_dhcp_lease_at(&path, "0a:0b:0c:0d:0e:0f", 200).unwrap(),
             None
         );
+    }
+
+    #[test]
+    fn recognizes_an_ssh_identification_banner() {
+        assert!(has_ssh_banner(b"SSH-2.0-OpenSSH_10.0\r\n"));
+        assert!(has_ssh_banner(b"notice\r\nSSH-2.0-OpenSSH_10.0\r\n"));
+        assert!(!has_ssh_banner(b"HTTP/1.1 200 OK\r\n"));
     }
 }
