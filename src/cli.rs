@@ -6,6 +6,7 @@ use std::time::Duration;
 use anyhow::{Context, Result, bail};
 use clap::{Args, Parser, Subcommand};
 
+use crate::capacity;
 use crate::config::{
     ServiceConfig, Store, VmBoot, VmConfig, Workload, generate_mac_address, validate_name,
 };
@@ -37,6 +38,8 @@ enum CommandGroup {
     },
     /// Check whether Lemon's native runtime dependencies are available.
     Doctor,
+    /// Show VM resource limits and current launchd service allocations.
+    Capacity,
     #[command(hide = true)]
     RunService { name: String },
 }
@@ -192,6 +195,7 @@ impl Cli {
             CommandGroup::Container { command } => run_container(command),
             CommandGroup::Service { command } => run_service(command, &store),
             CommandGroup::Doctor => doctor(),
+            CommandGroup::Capacity => show_capacity(&store),
             CommandGroup::RunService { name } => runtime::exec_service(&store, &name),
         }
     }
@@ -261,6 +265,7 @@ fn run_vm(command: VmCommand, store: &Store) -> Result<()> {
             }
         }
         VmCommand::Run { name } => {
+            capacity::ensure_vm_fits(&store.load_vm(&name)?)?;
             let status = runtime::run_vm(store, &name, true)?;
             if !status.success() {
                 bail!("VM exited with {status}");
@@ -430,6 +435,7 @@ fn run_service(command: ServiceCommand, store: &Store) -> Result<()> {
             if wait.is_some() && !matches!(service.workload, Workload::Vm { .. }) {
                 bail!("--wait is only supported for VM services");
             }
+            let _admission = capacity::admit(store, &service)?;
             launchd::start(store, &service)?;
             println!("Started service {name}");
             if let Some(timeout) = wait {
@@ -516,6 +522,25 @@ fn doctor() -> Result<()> {
     if arch != "aarch64" {
         println!("               warning: Apple container requires Apple silicon");
     }
+    Ok(())
+}
+
+fn show_capacity(store: &Store) -> Result<()> {
+    let limits = capacity::limits()?;
+    let allocated = capacity::allocated(store, None)?;
+    println!("RESOURCE\tALLOCATED\tLIMIT\tAVAILABLE");
+    println!(
+        "cpus\t{}\t{}\t{}",
+        allocated.cpus,
+        limits.cpus,
+        limits.cpus.saturating_sub(allocated.cpus)
+    );
+    println!(
+        "memory MiB\t{}\t{}\t{}",
+        allocated.memory_mib,
+        limits.memory_mib,
+        limits.memory_mib.saturating_sub(allocated.memory_mib)
+    );
     Ok(())
 }
 

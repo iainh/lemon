@@ -105,6 +105,7 @@ lemon vm ssh dev -- sudo dnf install -y git
 lemon vm create|clone|list|run|wait|ssh|delete
 lemon container pull
 lemon service create|list|start|stop|status|delete|logs
+lemon capacity
 lemon doctor
 ```
 
@@ -128,6 +129,11 @@ last exit code reported by launchd, and guest SSH readiness. Pass
 
 Configuration is stored under `~/Library/Application Support/dev.lemon.lemon`
 and service logs are under Lemon's standard macOS data directory.
+
+Lemon serializes VM starts and prevents loaded VM services from reserving more
+than the host CPU count or 80% of physical memory. Set `LEMON_MAX_CPUS` or
+`LEMON_MAX_MEMORY_MIB` to use lower deployment-specific limits. Run
+`lemon capacity` to show current allocations.
 
 ## Status
 
