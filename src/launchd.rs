@@ -4,6 +4,8 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
+use std::thread;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use plist::{Dictionary, Value};
@@ -87,6 +89,7 @@ fn job_dictionary(
     job.insert("KeepAlive".into(), Value::Boolean(service.restart));
     job.insert("ProcessType".into(), Value::String("Background".into()));
     job.insert("ThrottleInterval".into(), Value::Integer(5.into()));
+    job.insert("ExitTimeOut".into(), Value::Integer(15.into()));
     let mut environment = Dictionary::new();
     environment.insert(
         "LEMON_CONFIG_DIR".into(),
@@ -154,12 +157,8 @@ fn is_executable(path: &Path) -> bool {
 }
 
 pub fn start(store: &Store, service: &ServiceConfig) -> Result<()> {
-    let target = format!("{}/{}", domain(), label(&service.name));
     if state(&service.name)? != JobState::Stopped {
-        run_checked(
-            Command::new("launchctl").args(["bootout", &target]),
-            "launchctl bootout",
-        )?;
+        stop(&service.name)?;
     }
     logs::rotate_service(store, service)?;
     let path = write_agent(store, service)?;
@@ -177,7 +176,15 @@ pub fn stop(name: &str) -> Result<()> {
     run_checked(
         Command::new("launchctl").args(["bootout", &target]),
         "launchctl bootout",
-    )
+    )?;
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while state(name)? != JobState::Stopped {
+        if Instant::now() >= deadline {
+            bail!("launchd did not stop service {name:?} within 20 seconds");
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+    Ok(())
 }
 
 pub fn state(name: &str) -> Result<JobState> {
@@ -360,6 +367,7 @@ mod tests {
         );
         assert_eq!(job["Label"].as_string(), Some("dev.lemon.web"));
         assert_eq!(job["KeepAlive"].as_boolean(), Some(true));
+        assert_eq!(job["ExitTimeOut"].as_signed_integer(), Some(15));
         let args = job["ProgramArguments"].as_array().unwrap();
         assert_eq!(args[1].as_string(), Some("run-service"));
         assert_eq!(args[2].as_string(), Some("web"));
