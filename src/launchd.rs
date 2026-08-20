@@ -10,6 +10,23 @@ use plist::{Dictionary, Value};
 use crate::config::{LABEL_PREFIX, ServiceConfig, Store, Workload};
 use crate::runtime::run_checked;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum JobState {
+    Running,
+    Loaded,
+    Stopped,
+}
+
+impl JobState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Running => "running",
+            Self::Loaded => "loaded",
+            Self::Stopped => "stopped",
+        }
+    }
+}
+
 pub fn label(name: &str) -> String {
     format!("{LABEL_PREFIX}.{name}")
 }
@@ -128,11 +145,7 @@ fn is_executable(path: &Path) -> bool {
 pub fn start(store: &Store, service: &ServiceConfig) -> Result<()> {
     let path = write_agent(store, service)?;
     let target = format!("{}/{}", domain(), label(&service.name));
-    if Command::new("launchctl")
-        .args(["print", &target])
-        .output()
-        .is_ok_and(|output| output.status.success())
-    {
+    if state(&service.name)? != JobState::Stopped {
         return run_checked(
             Command::new("launchctl").args(["kickstart", "-k", &target]),
             "launchctl kickstart",
@@ -155,16 +168,29 @@ pub fn stop(name: &str) -> Result<()> {
     )
 }
 
-pub fn is_running(name: &str) -> bool {
+pub fn state(name: &str) -> Result<JobState> {
     let target = format!("{}/{}", domain(), label(name));
-    Command::new("launchctl")
+    let output = Command::new("launchctl")
         .args(["print", &target])
         .output()
-        .is_ok_and(|output| output.status.success())
+        .context("failed to execute launchctl print")?;
+    if !output.status.success() {
+        return Ok(JobState::Stopped);
+    }
+    let body = String::from_utf8_lossy(&output.stdout);
+    if job_is_running(&body) {
+        Ok(JobState::Running)
+    } else {
+        Ok(JobState::Loaded)
+    }
+}
+
+fn job_is_running(body: &str) -> bool {
+    body.lines().any(|line| line.trim() == "state = running")
 }
 
 pub fn delete(name: &str) -> Result<()> {
-    if is_running(name) {
+    if state(name)? != JobState::Stopped {
         stop(name)?;
     }
     let path = agent_path(name)?;
@@ -194,6 +220,12 @@ mod tests {
     #[test]
     fn labels_are_namespaced() {
         assert_eq!(label("web"), "dev.lemon.web");
+    }
+
+    #[test]
+    fn distinguishes_a_running_job_from_a_loaded_job() {
+        assert!(job_is_running("active count = 1\n\tstate = running\n"));
+        assert!(!job_is_running("active count = 0\n\tstate = waiting\n"));
     }
 
     #[test]

@@ -357,11 +357,7 @@ fn run_service(command: ServiceCommand, store: &Store) -> Result<()> {
                     Workload::Vm { .. } => "vm",
                     Workload::Container { .. } => "container",
                 };
-                let state = if launchd::is_running(&service.name) {
-                    "loaded"
-                } else {
-                    "stopped"
-                };
+                let state = launchd::state(&service.name)?.as_str();
                 println!("{}\t{}\t{}\t{}", service.name, kind, state, service.restart);
             }
         }
@@ -372,7 +368,7 @@ fn run_service(command: ServiceCommand, store: &Store) -> Result<()> {
         }
         ServiceCommand::Stop { name } => {
             store.load_service(&name)?;
-            if launchd::is_running(&name) {
+            if launchd::state(&name)? != launchd::JobState::Stopped {
                 launchd::stop(&name)?;
                 println!("Stopped service {name}");
             } else {
@@ -381,11 +377,7 @@ fn run_service(command: ServiceCommand, store: &Store) -> Result<()> {
         }
         ServiceCommand::Status { name } => {
             store.load_service(&name)?;
-            if launchd::is_running(&name) {
-                println!("{name}: loaded");
-            } else {
-                println!("{name}: stopped");
-            }
+            println!("{name}: {}", launchd::state(&name)?.as_str());
         }
         ServiceCommand::Delete { name } => {
             let path = store.service_path(&name);
