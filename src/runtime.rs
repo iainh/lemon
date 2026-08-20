@@ -116,7 +116,7 @@ pub fn run_vm(store: &Store, name: &str, interactive: bool) -> Result<ExitStatus
         ensure_cloud_init_support(Path::new("vfkit"))?;
     }
     prepare_vm(&vm)?;
-    let _lock = acquire_vm_lock(store, name)?;
+    let _locks = acquire_vm_locks(store, &vm)?;
     let log_path = store.log_dir().join(format!("vm-{name}.log"));
     std::fs::create_dir_all(store.log_dir()).context("failed to create log directory")?;
     let args = vfkit_args(&vm, interactive, &log_path);
@@ -139,8 +139,8 @@ pub fn exec_service(store: &Store, name: &str) -> Result<()> {
                 ensure_cloud_init_support(Path::new(runtime))?;
             }
             prepare_vm(&config)?;
-            let lock = acquire_vm_lock(store, vm)?;
-            preserve_lock_across_exec(&lock)?;
+            let locks = acquire_vm_locks(store, &config)?;
+            preserve_locks_across_exec(&locks)?;
             let log_path = store.log_dir().join(format!("vm-{vm}.log"));
             std::fs::create_dir_all(store.log_dir())?;
             Command::new(runtime)
@@ -235,6 +235,44 @@ pub(crate) fn acquire_vm_lock(store: &Store, name: &str) -> Result<File> {
     Ok(file)
 }
 
+fn acquire_vm_locks(store: &Store, vm: &VmConfig) -> Result<Vec<File>> {
+    let mut locks = vec![acquire_vm_lock(store, &vm.name)?];
+    let mut disks = vm.disks.iter().collect::<Vec<_>>();
+    disks.sort();
+    disks.dedup();
+    for disk in disks {
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(disk)
+            .with_context(|| format!("failed to open VM disk {}", disk.display()))?;
+        lock_file(&file).with_context(|| {
+            format!(
+                "VM disk {} is already in use by another Lemon VM",
+                disk.display()
+            )
+        })?;
+        locks.push(file);
+    }
+    Ok(locks)
+}
+
+fn lock_file(file: &File) -> Result<()> {
+    // SAFETY: flock only reads the valid file descriptor and has no pointer arguments.
+    let result = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+    if result != 0 {
+        return Err(std::io::Error::last_os_error()).context("failed to lock file");
+    }
+    Ok(())
+}
+
+fn preserve_locks_across_exec(files: &[File]) -> Result<()> {
+    for file in files {
+        preserve_lock_across_exec(file)?;
+    }
+    Ok(())
+}
+
 fn preserve_lock_across_exec(file: &File) -> Result<()> {
     let descriptor = file.as_raw_fd();
     // SAFETY: fcntl only operates on the valid descriptor and uses integer arguments here.
@@ -293,5 +331,33 @@ mod tests {
         let _lock = acquire_vm_lock(&store, "dev").unwrap();
         let error = acquire_vm_lock(&store, "dev").unwrap_err();
         assert!(error.to_string().contains("already running"));
+    }
+
+    #[test]
+    fn prevents_two_vms_from_using_the_same_writable_disk() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Store {
+            config_dir: temp.path().join("config"),
+            data_dir: temp.path().join("data"),
+        };
+        let disk = temp.path().join("disk.raw");
+        std::fs::write(&disk, []).unwrap();
+        let vm = |name: &str| VmConfig {
+            name: name.into(),
+            cpus: 1,
+            memory_mib: 512,
+            mac_address: None,
+            cloud_init: None,
+            boot: VmBoot::Efi {
+                variable_store: temp.path().join(format!("{name}.efi")),
+            },
+            disks: vec![disk.clone()],
+        };
+
+        let _locks = acquire_vm_locks(&store, &vm("first")).unwrap();
+        let error = acquire_vm_locks(&store, &vm("second")).unwrap_err();
+
+        assert!(error.to_string().contains("already in use"));
+        assert!(error.to_string().contains("disk.raw"));
     }
 }
