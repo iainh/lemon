@@ -235,7 +235,7 @@ pub(crate) fn acquire_vm_lock(store: &Store, name: &str) -> Result<File> {
     Ok(file)
 }
 
-fn acquire_vm_locks(store: &Store, vm: &VmConfig) -> Result<Vec<File>> {
+pub(crate) fn acquire_vm_locks(store: &Store, vm: &VmConfig) -> Result<Vec<File>> {
     let mut locks = vec![acquire_vm_lock(store, &vm.name)?];
     let mut disks = vm.disks.iter().collect::<Vec<_>>();
     disks.sort();
@@ -352,6 +352,7 @@ mod tests {
                 variable_store: temp.path().join(format!("{name}.efi")),
             },
             disks: vec![disk.clone()],
+            managed_storage: false,
         };
 
         let _locks = acquire_vm_locks(&store, &vm("first")).unwrap();

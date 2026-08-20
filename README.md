@@ -101,7 +101,7 @@ lemon vm ssh dev -- sudo dnf install -y git
 ## Commands
 
 ```text
-lemon vm create|list|run|ssh|delete
+lemon vm create|clone|list|run|ssh|delete
 lemon container pull
 lemon service create|list|start|stop|status|delete|logs
 lemon doctor

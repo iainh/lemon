@@ -5,7 +5,7 @@ use anyhow::{Context, Result, bail};
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
-use crate::fsutil::atomic_write;
+use crate::fsutil::{atomic_write, clone_file};
 
 pub const LABEL_PREFIX: &str = "dev.lemon";
 
@@ -20,6 +20,8 @@ pub struct VmConfig {
     pub cloud_init: Option<CloudInitConfig>,
     pub boot: VmBoot,
     pub disks: Vec<PathBuf>,
+    #[serde(default)]
+    pub managed_storage: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -111,11 +113,15 @@ impl Store {
     }
 
     pub fn efi_store_path(&self, name: &str) -> PathBuf {
-        self.data_dir.join("vms").join(name).join("efi-vars")
+        self.vm_data_dir(name).join("efi-vars")
     }
 
     pub fn vm_lock_path(&self, name: &str) -> PathBuf {
-        self.data_dir.join("vms").join(name).join("run.lock")
+        self.vm_data_dir(name).join("run.lock")
+    }
+
+    pub fn vm_data_dir(&self, name: &str) -> PathBuf {
+        self.data_dir.join("vms").join(name)
     }
 
     pub fn create_cloud_init(
@@ -156,6 +162,82 @@ impl Store {
 
     pub fn save_vm(&self, config: &VmConfig) -> Result<()> {
         write_toml(&self.vm_path(&config.name), config)
+    }
+
+    pub fn clone_vm(&self, source: &VmConfig, name: &str) -> Result<VmConfig> {
+        let directory = self.vm_data_dir(name);
+        if directory.exists() {
+            bail!("VM data directory already exists ({})", directory.display());
+        }
+        let result = (|| {
+            let mut disks = Vec::with_capacity(source.disks.len());
+            for (index, disk) in source.disks.iter().enumerate() {
+                let filename = disk.file_name().context("VM disk path has no filename")?;
+                let destination = directory
+                    .join("disks")
+                    .join(format!("{index}-{}", filename.to_string_lossy()));
+                clone_file(disk, &destination)?;
+                disks.push(destination);
+            }
+            let boot = match &source.boot {
+                VmBoot::Linux {
+                    kernel,
+                    initrd,
+                    cmdline,
+                } => VmBoot::Linux {
+                    kernel: kernel.clone(),
+                    initrd: initrd.clone(),
+                    cmdline: cmdline.clone(),
+                },
+                VmBoot::Efi { variable_store } => {
+                    let destination = self.efi_store_path(name);
+                    if variable_store.exists() {
+                        clone_file(variable_store, &destination)?;
+                    }
+                    VmBoot::Efi {
+                        variable_store: destination,
+                    }
+                }
+            };
+            let cloud_init = source
+                .cloud_init
+                .as_ref()
+                .map(|cloud_init| -> Result<CloudInitConfig> {
+                    let target = directory.join("cloud-init");
+                    let user_data = target.join("user-data");
+                    let meta_data = target.join("meta-data");
+                    clone_file(&cloud_init.user_data, &user_data)?;
+                    atomic_write(
+                        &meta_data,
+                        format!(
+                            "instance-id: {}\nlocal-hostname: {}\n",
+                            yaml_string(&format!("lemon-{name}")),
+                            yaml_string(name),
+                        )
+                        .as_bytes(),
+                    )?;
+                    Ok(CloudInitConfig {
+                        user: cloud_init.user.clone(),
+                        user_data,
+                        meta_data,
+                    })
+                })
+                .transpose()?;
+            Ok(VmConfig {
+                name: name.into(),
+                cpus: source.cpus,
+                memory_mib: source.memory_mib,
+                mac_address: Some(generate_mac_address()?),
+                cloud_init,
+                boot,
+                disks,
+                managed_storage: true,
+            })
+        })();
+        if result.is_err() {
+            let _ = fs::remove_dir_all(directory);
+        }
+        result
     }
 
     pub fn load_vm(&self, name: &str) -> Result<VmConfig> {
@@ -274,6 +356,43 @@ mod tests {
         assert!(user_data.contains("name: 'lemon'"));
         assert!(user_data.contains("ssh-ed25519 AAAA''test key"));
         assert_eq!(config.user, "lemon");
+    }
+
+    #[test]
+    fn clones_vm_storage_and_identity() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Store {
+            config_dir: temp.path().join("config"),
+            data_dir: temp.path().join("data"),
+        };
+        let disk = temp.path().join("source.raw");
+        fs::write(&disk, b"source disk").unwrap();
+        let cloud_init = store
+            .create_cloud_init("source", "lemon", "ssh-ed25519 AAAA")
+            .unwrap();
+        let source = VmConfig {
+            name: "source".into(),
+            cpus: 2,
+            memory_mib: 2048,
+            mac_address: Some("02:00:00:00:00:01".into()),
+            cloud_init: Some(cloud_init),
+            boot: VmBoot::Linux {
+                kernel: "/kernel".into(),
+                initrd: None,
+                cmdline: "console=hvc0".into(),
+            },
+            disks: vec![disk],
+            managed_storage: false,
+        };
+
+        let clone = store.clone_vm(&source, "clone").unwrap();
+
+        assert_eq!(fs::read(&clone.disks[0]).unwrap(), b"source disk");
+        assert_ne!(clone.mac_address, source.mac_address);
+        assert!(clone.managed_storage);
+        let metadata = fs::read_to_string(clone.cloud_init.unwrap().meta_data).unwrap();
+        assert!(metadata.contains("lemon-clone"));
+        assert!(metadata.contains("local-hostname: 'clone'"));
     }
 
     #[test]

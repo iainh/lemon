@@ -45,6 +45,8 @@ enum CommandGroup {
 enum VmCommand {
     /// Define a VM backed by vfkit and Virtualization.framework.
     Create(VmCreate),
+    /// Clone a stopped VM using copy-on-write storage when available.
+    Clone { source: String, name: String },
     /// List defined VMs.
     List,
     /// Run a VM in the foreground with an interactive serial console.
@@ -214,8 +216,23 @@ fn run_vm(command: VmCommand, store: &Store) -> Result<()> {
                 cloud_init,
                 boot,
                 disks,
+                managed_storage: false,
             })?;
             println!("Created VM {}", args.name);
+        }
+        VmCommand::Clone { source, name } => {
+            validate_name(&name)?;
+            if store.vm_path(&name).exists() {
+                bail!("VM {name:?} already exists");
+            }
+            let source = store.load_vm(&source)?;
+            let _locks = runtime::acquire_vm_locks(store, &source)?;
+            let clone = store.clone_vm(&source, &name)?;
+            if let Err(error) = store.save_vm(&clone) {
+                let _ = fs::remove_dir_all(store.vm_data_dir(&name));
+                return Err(error);
+            }
+            println!("Cloned VM {} to {name}", source.name);
         }
         VmCommand::List => {
             println!("NAME\tCPUS\tMEMORY\tBOOT");
