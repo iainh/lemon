@@ -98,3 +98,25 @@ VMs, NAT networking, raw VM disks, OCI image pulls, and common container
 resource/environment/port/volume options. It intentionally delegates runtime
 and image storage to Apple-native tools rather than maintaining a second VM or
 OCI implementation.
+
+## Testing
+
+Run the fast unit test suite with:
+
+```sh
+cargo test
+```
+
+An ignored end-to-end test discovers the current Fedora Server aarch64 raw
+image advertised at [fedoraproject.org/server/download](https://fedoraproject.org/server/download/),
+downloads and verifies it, defines and boots an EFI VM through Lemon, observes
+the running VM, and tears everything down:
+
+```sh
+cargo test --test fedora_vm -- --ignored --nocapture
+```
+
+The integration test requires an Apple silicon Mac, `vfkit`, internet access,
+about 1.5 GB of download bandwidth, several gigabytes of temporary disk space,
+and a few minutes to run. All image, VM, and HOME data is kept in a temporary
+directory and removed at the end.
