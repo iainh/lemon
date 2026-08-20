@@ -33,6 +33,18 @@ pub fn vfkit_args(vm: &VmConfig, interactive: bool, log_path: &Path) -> Vec<OsSt
     };
     args.extend(["--bootloader".into(), bootloader.into()]);
 
+    if let Some(cloud_init) = &vm.cloud_init {
+        args.extend([
+            "--cloud-init".into(),
+            format!(
+                "{},{}",
+                cloud_init.user_data.display(),
+                cloud_init.meta_data.display()
+            )
+            .into(),
+        ]);
+    }
+
     for disk in &vm.disks {
         args.extend([
             "--device".into(),

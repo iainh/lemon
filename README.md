@@ -58,6 +58,7 @@ lemon vm create dev \
   --kernel ./Image \
   --initrd ./initramfs.img \
   --disk ./rootfs.raw \
+  --ssh-key ~/.ssh/id_ed25519.pub \
   --cmdline 'console=hvc0 root=/dev/vda rw' \
   --cpus 4 --memory 4096
 
@@ -68,6 +69,8 @@ lemon service start dev-service
 
 Omit `--kernel` to use EFI boot. The first disk must contain a bootable EFI
 system; Lemon creates and persists the EFI variable store automatically.
+Supplying `--ssh-key` creates a `lemon` guest account through cloud-init; the
+guest image must include cloud-init. Use `--user` to choose another account.
 
 ## Commands
 

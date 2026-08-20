@@ -72,6 +72,12 @@ struct VmCreate {
     /// Memory in MiB.
     #[arg(long, default_value_t = 2048, value_parser = clap::value_parser!(u32).range(256..))]
     memory: u32,
+    /// OpenSSH public key to authorize using cloud-init.
+    #[arg(long, value_name = "PATH")]
+    ssh_key: Option<PathBuf>,
+    /// Guest account created when --ssh-key is supplied.
+    #[arg(long, default_value = "lemon", requires = "ssh_key")]
+    user: String,
 }
 
 #[derive(Debug, Subcommand)]
@@ -172,11 +178,20 @@ fn run_vm(command: VmCommand, store: &Store) -> Result<()> {
                     variable_store: store.efi_store_path(&args.name),
                 }
             };
+            let cloud_init = args
+                .ssh_key
+                .map(|path| {
+                    let public_key = read_public_key(&path)?;
+                    validate_guest_user(&args.user)?;
+                    store.create_cloud_init(&args.name, &args.user, &public_key)
+                })
+                .transpose()?;
             store.save_vm(&VmConfig {
                 name: args.name.clone(),
                 cpus: args.cpus,
                 memory_mib: args.memory,
                 mac_address: Some(generate_mac_address()?),
+                cloud_init,
                 boot,
                 disks,
             })?;
@@ -381,4 +396,25 @@ fn canonical_file(path: &Path) -> Result<PathBuf> {
         bail!("{} is not a file", canonical.display());
     }
     Ok(canonical)
+}
+
+fn read_public_key(path: &Path) -> Result<String> {
+    let key = fs::read_to_string(path)
+        .with_context(|| format!("failed to read SSH public key {}", path.display()))?;
+    let key = key.trim();
+    if key.is_empty() || key.contains(['\n', '\r']) || key.split_whitespace().count() < 2 {
+        bail!("{} is not a single OpenSSH public key", path.display());
+    }
+    Ok(key.to_owned())
+}
+
+fn validate_guest_user(user: &str) -> Result<()> {
+    if user.is_empty()
+        || !user
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || matches!(character, '_' | '-'))
+    {
+        bail!("invalid guest user {user:?}; use only letters, numbers, '_' or '-'");
+    }
+    Ok(())
 }

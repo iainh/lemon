@@ -14,8 +14,17 @@ pub struct VmConfig {
     pub memory_mib: u32,
     #[serde(default)]
     pub mac_address: Option<String>,
+    #[serde(default)]
+    pub cloud_init: Option<CloudInitConfig>,
     pub boot: VmBoot,
     pub disks: Vec<PathBuf>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CloudInitConfig {
+    pub user: String,
+    pub user_data: PathBuf,
+    pub meta_data: PathBuf,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -90,6 +99,42 @@ impl Store {
         self.data_dir.join("vms").join(name).join("efi-vars")
     }
 
+    pub fn create_cloud_init(
+        &self,
+        vm_name: &str,
+        user: &str,
+        public_key: &str,
+    ) -> Result<CloudInitConfig> {
+        let directory = self.data_dir.join("vms").join(vm_name).join("cloud-init");
+        fs::create_dir_all(&directory)
+            .with_context(|| format!("failed to create {}", directory.display()))?;
+        let user_data = directory.join("user-data");
+        let meta_data = directory.join("meta-data");
+        fs::write(
+            &user_data,
+            format!(
+                "#cloud-config\nusers:\n  - name: {}\n    lock_passwd: true\n    shell: /bin/sh\n    sudo: ALL=(ALL) NOPASSWD:ALL\n    ssh_authorized_keys:\n      - {}\nssh_pwauth: false\ndisable_root: true\n",
+                yaml_string(user),
+                yaml_string(public_key),
+            ),
+        )
+        .with_context(|| format!("failed to write {}", user_data.display()))?;
+        fs::write(
+            &meta_data,
+            format!(
+                "instance-id: {}\nlocal-hostname: {}\n",
+                yaml_string(&format!("lemon-{vm_name}")),
+                yaml_string(vm_name),
+            ),
+        )
+        .with_context(|| format!("failed to write {}", meta_data.display()))?;
+        Ok(CloudInitConfig {
+            user: user.to_owned(),
+            user_data,
+            meta_data,
+        })
+    }
+
     pub fn save_vm(&self, config: &VmConfig) -> Result<()> {
         write_toml(&self.vm_path(&config.name), config)
     }
@@ -145,6 +190,10 @@ pub fn generate_mac_address() -> Result<String> {
         .join(":"))
 }
 
+fn yaml_string(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "''"))
+}
+
 fn write_toml<T: Serialize>(path: &Path, value: &T) -> Result<()> {
     let parent = path.parent().context("configuration path has no parent")?;
     fs::create_dir_all(parent).with_context(|| format!("failed to create {}", parent.display()))?;
@@ -192,6 +241,22 @@ mod tests {
         let first = u8::from_str_radix(&mac[..2], 16).unwrap();
         assert_eq!(mac.len(), 17);
         assert_eq!(first & 0x03, 0x02);
+    }
+
+    #[test]
+    fn creates_cloud_init_data_with_an_authorized_key() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Store {
+            config_dir: temp.path().join("config"),
+            data_dir: temp.path().join("data"),
+        };
+        let config = store
+            .create_cloud_init("dev", "lemon", "ssh-ed25519 AAAA'test key")
+            .unwrap();
+        let user_data = fs::read_to_string(config.user_data).unwrap();
+        assert!(user_data.contains("name: 'lemon'"));
+        assert!(user_data.contains("ssh-ed25519 AAAA''test key"));
+        assert_eq!(config.user, "lemon");
     }
 
     #[test]
