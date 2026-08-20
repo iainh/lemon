@@ -16,7 +16,7 @@ current user's standard macOS Library directories.
 
 - macOS on Apple silicon.
 - Rust 1.85 or newer to build Lemon.
-- `vfkit` for full VMs: `brew install vfkit`.
+- `vfkit` 0.6.1 or newer for full VMs: `brew install vfkit`.
 - Apple `container` and macOS 26 for containers. Install a signed release, then
   initialize it once with `container system start`.
 

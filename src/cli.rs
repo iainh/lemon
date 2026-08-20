@@ -412,7 +412,8 @@ fn run_service(command: ServiceCommand, store: &Store) -> Result<()> {
 fn doctor() -> Result<()> {
     println!("Lemon runtime check");
     check_tool("launchctl", "built into macOS");
-    check_tool("vfkit", "brew install vfkit");
+    check_vfkit();
+    check_tool("ssh", "built into macOS");
     check_tool("container", "https://github.com/apple/container/releases");
     let arch = std::env::consts::ARCH;
     println!("  {:<12} {arch}", "architecture");
@@ -422,16 +423,31 @@ fn doctor() -> Result<()> {
     Ok(())
 }
 
+fn check_vfkit() {
+    match find_tool("vfkit") {
+        Some(path) => {
+            println!("  {:<12} {}", "vfkit", path.display());
+            if !runtime::supports_cloud_init(&path) {
+                println!("               warning: vfkit 0.6.1 or newer is required for --ssh-key");
+            }
+        }
+        None => println!("  {:<12} missing (brew install vfkit)", "vfkit"),
+    }
+}
+
 fn check_tool(name: &str, install: &str) {
-    let found = std::env::var_os("PATH").and_then(|path| {
-        std::env::split_paths(&path)
-            .map(|dir| dir.join(name))
-            .find(|path| path.is_file())
-    });
-    match found {
+    match find_tool(name) {
         Some(path) => println!("  {name:<12} {}", path.display()),
         None => println!("  {name:<12} missing ({install})"),
     }
+}
+
+fn find_tool(name: &str) -> Option<PathBuf> {
+    std::env::var_os("PATH").and_then(|path| {
+        std::env::split_paths(&path)
+            .map(|dir| dir.join(name))
+            .find(|path| path.is_file())
+    })
 }
 
 fn canonical_files(paths: &[PathBuf]) -> Result<Vec<PathBuf>> {

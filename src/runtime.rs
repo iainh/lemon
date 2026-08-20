@@ -112,6 +112,9 @@ pub fn container_args(service: &ServiceConfig) -> Result<Vec<OsString>> {
 
 pub fn run_vm(store: &Store, name: &str, interactive: bool) -> Result<ExitStatus> {
     let vm = store.load_vm(name)?;
+    if vm.cloud_init.is_some() {
+        ensure_cloud_init_support(Path::new("vfkit"))?;
+    }
     prepare_vm(&vm)?;
     let _lock = acquire_vm_lock(store, name)?;
     let log_path = store.log_dir().join(format!("vm-{name}.log"));
@@ -131,12 +134,16 @@ pub fn exec_service(store: &Store, name: &str) -> Result<()> {
     let error = match &service.workload {
         Workload::Vm { vm } => {
             let config = store.load_vm(vm)?;
+            let runtime = runtime.as_deref().unwrap_or_else(|| "vfkit".as_ref());
+            if config.cloud_init.is_some() {
+                ensure_cloud_init_support(Path::new(runtime))?;
+            }
             prepare_vm(&config)?;
             let lock = acquire_vm_lock(store, vm)?;
             preserve_lock_across_exec(&lock)?;
             let log_path = store.log_dir().join(format!("vm-{vm}.log"));
             std::fs::create_dir_all(store.log_dir())?;
-            Command::new(runtime.as_deref().unwrap_or_else(|| "vfkit".as_ref()))
+            Command::new(runtime)
                 .args(vfkit_args(&config, false, &log_path))
                 .exec()
         }
@@ -147,6 +154,26 @@ pub fn exec_service(store: &Store, name: &str) -> Result<()> {
         }
     };
     Err(error).context("failed to execute service runtime")
+}
+
+pub fn supports_cloud_init(executable: &Path) -> bool {
+    Command::new(executable)
+        .arg("--help")
+        .output()
+        .is_ok_and(|output| {
+            String::from_utf8_lossy(&output.stdout).contains("--cloud-init")
+                || String::from_utf8_lossy(&output.stderr).contains("--cloud-init")
+        })
+}
+
+fn ensure_cloud_init_support(executable: &Path) -> Result<()> {
+    if !supports_cloud_init(executable) {
+        bail!(
+            "{} does not support --cloud-init; install vfkit 0.6.1 or newer",
+            executable.display()
+        );
+    }
+    Ok(())
 }
 
 pub fn exec_ssh(user: &str, address: IpAddr, identity: Option<&Path>) -> Result<()> {
