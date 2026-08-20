@@ -1,5 +1,6 @@
 mod cli;
 mod config;
+mod fsutil;
 mod launchd;
 mod network;
 mod runtime;

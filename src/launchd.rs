@@ -8,6 +8,7 @@ use anyhow::{Context, Result, bail};
 use plist::{Dictionary, Value};
 
 use crate::config::{LABEL_PREFIX, ServiceConfig, Store, Workload};
+use crate::fsutil::atomic_write;
 use crate::runtime::run_checked;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -48,10 +49,10 @@ pub fn write_agent(store: &Store, service: &ServiceConfig) -> Result<PathBuf> {
     fs::create_dir_all(path.parent().expect("launch agent has a parent"))?;
     let runtime = runtime_executable(service)?;
     let job = job_dictionary(store, service, executable, runtime);
-    let file =
-        fs::File::create(&path).with_context(|| format!("failed to create {}", path.display()))?;
-    plist::to_writer_xml(file, &Value::Dictionary(job))
-        .with_context(|| format!("failed to write {}", path.display()))?;
+    let mut body = Vec::new();
+    plist::to_writer_xml(&mut body, &Value::Dictionary(job))
+        .context("failed to serialize LaunchAgent")?;
+    atomic_write(&path, &body)?;
     Ok(path)
 }
 

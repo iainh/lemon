@@ -5,6 +5,8 @@ use anyhow::{Context, Result, bail};
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
+use crate::fsutil::atomic_write;
+
 pub const LABEL_PREFIX: &str = "dev.lemon";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -212,10 +214,8 @@ fn yaml_string(value: &str) -> String {
 }
 
 fn write_toml<T: Serialize>(path: &Path, value: &T) -> Result<()> {
-    let parent = path.parent().context("configuration path has no parent")?;
-    fs::create_dir_all(parent).with_context(|| format!("failed to create {}", parent.display()))?;
     let body = toml::to_string_pretty(value).context("failed to serialize configuration")?;
-    fs::write(path, body).with_context(|| format!("failed to write {}", path.display()))
+    atomic_write(path, body.as_bytes())
 }
 
 fn read_toml<T: DeserializeOwned>(path: &Path, kind: &str, name: &str) -> Result<T> {
