@@ -1,7 +1,8 @@
 # Lemon
 
-Lemon runs Linux virtual machines and OCI containers as per-user `launchd`
-services on macOS. It provides one declarative CLI over modern native runtimes:
+Lemon is a command-line application for running Linux virtual machines (VMs)
+and OCI containers as per-user `launchd` services on macOS. It provides one
+declarative interface over modern native runtimes:
 
 - [vfkit](https://github.com/crc-org/vfkit), backed by Apple's
   Virtualization.framework, for full Linux VMs.
@@ -9,8 +10,9 @@ services on macOS. It provides one declarative CLI over modern native runtimes:
   Containerization and Virtualization frameworks, for OCI containers.
 - `launchd` LaunchAgents for startup, supervision, restart, and logs.
 
-Lemon does not run a privileged daemon. Configuration and logs stay in the
-current user's standard macOS Library directories.
+Lemon handles service definitions, startup, supervision, restart, resource
+limits, and log rotation. It does not run a privileged daemon. Configuration
+and logs remain in the current user's standard macOS Library directories.
 
 ## Requirements
 
@@ -26,6 +28,7 @@ Run `lemon doctor` to check the local tools and every VM's runtime files.
 
 ```sh
 cargo install --path .
+lemon doctor
 ```
 
 Keep the installed `lemon` binary at the same path after starting services;
@@ -47,7 +50,19 @@ nix run . -- doctor
 Initialize the Apple container runtime once with `container system start` before
 using container services.
 
-## Quick start
+## Usage
+
+The usual workflow is:
+
+1. Prepare a workload by pulling a container image or defining a VM.
+2. Create a named service for the workload.
+3. Start the service. Lemon installs a LaunchAgent and `launchd` supervises it.
+4. Use `status`, `logs`, `stop`, and `delete` to manage its lifecycle.
+
+Use `lemon --help` to list command groups and
+`lemon <command> <subcommand> --help` to see all options.
+
+### Run a web container
 
 Pull and run an OCI container at login:
 
@@ -60,14 +75,52 @@ lemon service status web
 lemon service logs web
 ```
 
-Pass an image command after `--`:
+Open [http://localhost:8080](http://localhost:8080) to reach nginx. To follow
+its standard output directly, use the path reported by `service logs`:
 
 ```sh
-lemon service create container worker alpine:latest \
-  --env QUEUE=default -- sh -c 'while true; do echo working; sleep 30; done'
+tail -f "$HOME/Library/Application Support/dev.lemon.lemon/logs/web.log"
 ```
 
-Define a Linux VM using direct kernel boot:
+Stop the service without deleting its definition, then start it again later:
+
+```sh
+lemon service stop web
+lemon service start web
+```
+
+Remove the service and its current and rotated logs:
+
+```sh
+lemon service delete web --purge-logs
+```
+
+### Run a container with environment variables and a volume
+
+The following service mounts a local directory, passes an environment variable,
+and overrides the image's default command. Arguments after `--` are sent to the
+container image:
+
+```sh
+mkdir -p "$HOME/lemon-data"
+lemon container pull alpine:latest
+
+lemon service create container worker alpine:latest \
+  --env QUEUE=default \
+  --volume "$HOME/lemon-data:/data" \
+  -- sh -c 'while true; do date | tee -a /data/worker.log; sleep 30; done'
+
+lemon service start worker
+tail -f "$HOME/lemon-data/worker.log"
+```
+
+Services restart when their workload exits unless you pass `--no-restart` to
+`service create`.
+
+### Define and run a Linux VM
+
+Lemon supports direct kernel boot and EFI boot. This direct kernel example
+expects an uncompressed Linux kernel, an initramfs, and a raw root disk image:
 
 ```sh
 lemon vm create dev \
@@ -85,6 +138,12 @@ lemon vm wait dev
 lemon vm ssh dev
 ```
 
+Run a command without opening an interactive shell:
+
+```sh
+lemon vm ssh dev -- sudo dnf install -y git
+```
+
 Omit `--kernel` to use EFI boot. The first disk must contain a bootable EFI
 system; Lemon creates and persists the EFI variable store automatically.
 Supplying `--ssh-key` creates a `lemon` guest account through cloud-init; the
@@ -93,21 +152,61 @@ guest image must include cloud-init. Use `--user` to choose another account.
 waits for the SSH protocol and selected authentication to become ready. It uses
 your SSH agent and normal key discovery, or accepts a private key with `-i`.
 
-Run a configuration command without opening an interactive shell:
+VMs can also run in the foreground with an interactive serial console. Stop any
+service using the VM first because Lemon prevents the same writable disks from
+running twice:
 
 ```sh
-lemon vm ssh dev -- sudo dnf install -y git
+lemon service stop dev-service
+lemon vm run dev
 ```
 
-## Commands
+### Clone a VM
 
-```text
-lemon vm create|clone|list|run|wait|ssh|delete
-lemon container pull
-lemon service create|list|start|stop|status|delete|logs|reconcile
-lemon capacity
-lemon doctor
+Clone a stopped VM before making experimental changes. Lemon uses copy-on-write
+cloning when the file system supports it and assigns the clone a new MAC
+address:
+
+```sh
+lemon service stop dev-service
+lemon vm clone dev dev-experiment
+lemon vm list
+lemon vm run dev-experiment
 ```
+
+### Use JSON output for automation
+
+Service listings, service status, and capacity information have machine-readable
+JSON output for scripts and monitoring tools:
+
+```sh
+lemon service list --json
+lemon service status worker --json
+lemon capacity --json
+```
+
+## Command reference
+
+| Command | Purpose |
+| --- | --- |
+| `lemon doctor` | Check native runtime dependencies and configured VM files. |
+| `lemon capacity` | Show VM CPU and memory limits and current allocations. |
+| `lemon container pull` | Pull an OCI image into Apple's container image store. |
+| `lemon vm create` | Define a direct-kernel or EFI VM. |
+| `lemon vm clone` | Clone a stopped VM and its disks. |
+| `lemon vm list` | List VM definitions. |
+| `lemon vm run` | Run a VM in the foreground with a serial console. |
+| `lemon vm wait` | Wait for a VM to obtain a DHCP lease and accept SSH. |
+| `lemon vm ssh` | Open an SSH session or run a command in a VM. |
+| `lemon vm delete` | Delete a VM definition. |
+| `lemon service create` | Define a VM or container service. |
+| `lemon service list` | List services and their `launchd` state. |
+| `lemon service start` | Install and start a service, or restart a loaded service. |
+| `lemon service stop` | Stop and unload a service. |
+| `lemon service status` | Show process, restart, exit, and guest readiness details. |
+| `lemon service logs` | Print a service's stdout, stderr, and guest log paths. |
+| `lemon service delete` | Remove a service definition and LaunchAgent. |
+| `lemon service reconcile` | Refresh installed agents and remove orphaned agents. |
 
 Use `lemon <command> --help` for all flags. VM deletion preserves disk images
 and VM data by default; pass `lemon vm delete --purge` to remove cloned disks
@@ -129,6 +228,16 @@ last exit code reported by launchd, and guest SSH readiness. Pass
 
 Configuration is stored under `~/Library/Application Support/dev.lemon.lemon`
 and service logs are under Lemon's standard macOS data directory.
+
+You can override Lemon's defaults with these environment variables:
+
+| Variable | Purpose |
+| --- | --- |
+| `LEMON_CONFIG_DIR` | Configuration directory; set with `LEMON_DATA_DIR`. |
+| `LEMON_DATA_DIR` | VM state and log directory; set with `LEMON_CONFIG_DIR`. |
+| `LEMON_MAX_CPUS` | Lower the host CPU allocation limit. |
+| `LEMON_MAX_MEMORY_MIB` | Lower the host memory allocation limit in MiB. |
+| `LEMON_LOG_MAX_BYTES` | Change the per-log rotation threshold in bytes. |
 
 Lemon serializes VM starts and prevents installed VM services from reserving
 more than the host CPU count or 80% of physical memory. Installed services
