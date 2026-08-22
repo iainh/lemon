@@ -26,85 +26,83 @@ let
   dataDirectory = configDirectory;
   logDirectory = "${dataDirectory}/logs";
 
-  vmModule =
-    { name, ... }:
-    {
-      options = {
-        cpus = mkOption {
-          type = types.ints.positive;
-          default = 2;
-          description = "Number of virtual CPUs.";
-        };
+  vmModule = {
+    options = {
+      cpus = mkOption {
+        type = types.ints.positive;
+        default = 2;
+        description = "Number of virtual CPUs.";
+      };
 
-        memoryMiB = mkOption {
-          type = types.ints.positive;
-          default = 2048;
-          description = "Memory allocated to the VM in MiB.";
-        };
+      memoryMiB = mkOption {
+        type = types.ints.positive;
+        default = 2048;
+        description = "Memory allocated to the VM in MiB.";
+      };
 
-        macAddress = mkOption {
+      macAddress = mkOption {
+        type = types.nullOr types.str;
+        default = null;
+        example = "02:00:00:00:00:01";
+        description = ''
+          Stable MAC address for the VM. By default, Lemon derives a locally
+          administered address from the VM name.
+        '';
+      };
+
+      disks = mkOption {
+        type = types.listOf types.str;
+        description = ''
+          Writable raw disk image paths. Keep these outside the Nix store.
+        '';
+      };
+
+      boot = {
+        kernel = mkOption {
           type = types.nullOr types.str;
           default = null;
-          example = "02:00:00:00:00:01";
-          description = ''
-            Stable MAC address for the VM. By default, Lemon derives a locally
-            administered address from the VM name.
-          '';
+          description = "Uncompressed Linux kernel path; null selects EFI boot.";
         };
 
-        disks = mkOption {
-          type = types.listOf types.str;
-          description = ''
-            Writable raw disk image paths. Keep these outside the Nix store.
-          '';
+        initrd = mkOption {
+          type = types.nullOr types.str;
+          default = null;
+          description = "Optional Linux initramfs path.";
         };
 
-        boot = {
-          kernel = mkOption {
-            type = types.nullOr types.str;
-            default = null;
-            description = "Uncompressed Linux kernel path; null selects EFI boot.";
-          };
+        cmdline = mkOption {
+          type = types.str;
+          default = "console=hvc0 rw";
+          description = "Linux kernel command line.";
+        };
+      };
 
-          initrd = mkOption {
-            type = types.nullOr types.str;
-            default = null;
-            description = "Optional Linux initramfs path.";
-          };
-
-          cmdline = mkOption {
-            type = types.str;
-            default = "console=hvc0 rw";
-            description = "Linux kernel command line.";
-          };
+      ssh = {
+        authorizedKey = mkOption {
+          type = types.nullOr types.str;
+          default = null;
+          example = "ssh-ed25519 AAAA... user@example";
+          description = "Public SSH key provisioned through cloud-init.";
         };
 
-        ssh = {
-          authorizedKey = mkOption {
-            type = types.nullOr types.str;
-            default = null;
-            example = "ssh-ed25519 AAAA... user@example";
-            description = "Public SSH key provisioned through cloud-init.";
-          };
-
-          user = mkOption {
-            type = types.str;
-            default = "lemon";
-            description = "Guest user provisioned through cloud-init.";
-          };
+        user = mkOption {
+          type = types.str;
+          default = "lemon";
+          description = "Guest user provisioned through cloud-init.";
         };
+      };
 
-        service = {
-          enable = mkEnableOption "a launchd service for this VM";
+      service = {
+        enable = mkEnableOption "a launchd service for this VM";
 
-          restart = mkOption {
-            type = types.bool;
-            default = true;
-            description = "Restart the VM when its runtime exits.";
-          };
+        restart = mkOption {
+          type = types.bool;
+          default = true;
+          description = "Restart the VM when its runtime exits.";
         };
       };
     };
+  };
 
   containerModule = {
     options = {
@@ -215,10 +213,9 @@ let
     name: vm:
     {
       inherit name;
-      cpus = vm.cpus;
+      inherit (vm) cpus disks;
       memory_mib = vm.memoryMiB;
       mac_address = if vm.macAddress == null then derivedMacAddress name else vm.macAddress;
-      disks = vm.disks;
       boot =
         if vm.boot.kernel == null then
           {
@@ -239,8 +236,8 @@ let
       cloud_init = cloudInit name vm;
     };
 
-  enabledServices = filterAttrs (_: vm: vm.service.enable) cfg.vms;
-  autoStartContainers = filterAttrs (_: container: container.autoStart) cfg.containers;
+  vmServices = filterAttrs (_: vm: vm.service.enable) cfg.vms;
+  containerServices = filterAttrs (_: container: container.autoStart) cfg.containers;
 
   containerConfig =
     name: container:
@@ -272,7 +269,7 @@ let
           vm = name;
         };
       }
-    ) enabledServices
+    ) vmServices
     // mapAttrs' (
       name: container:
       nameValuePair "Library/Application Support/dev.lemon.lemon/services/${name}.toml" {
@@ -281,7 +278,7 @@ let
     ) cfg.containers;
 
   agent =
-    name: restart: runtime:
+    name: restart: runtimePackage: runtimeName:
     nameValuePair "lemon-${name}" {
       enable = true;
       config = {
@@ -299,13 +296,8 @@ let
         EnvironmentVariables = {
           LEMON_CONFIG_DIR = configDirectory;
           LEMON_DATA_DIR = dataDirectory;
-          LEMON_RUNTIME = runtime;
-          PATH = lib.makeBinPath [
-            cfg.package
-            pkgs.container
-            pkgs.openssh
-            pkgs.vfkit
-          ];
+          LEMON_RUNTIME = "${runtimePackage}/bin/${runtimeName}";
+          PATH = lib.makeBinPath [ runtimePackage ];
         };
         StandardOutPath = "${logDirectory}/${name}.log";
         StandardErrorPath = "${logDirectory}/${name}.error.log";
@@ -313,20 +305,21 @@ let
     };
 
   agents =
-    mapAttrs' (name: vm: agent name vm.service.restart "${pkgs.vfkit}/bin/vfkit") enabledServices
+    mapAttrs' (name: vm: agent name vm.service.restart pkgs.vfkit "vfkit") vmServices
     // mapAttrs' (
-      name: container: agent name container.restart "${pkgs.container}/bin/container"
-    ) autoStartContainers;
+      name: container: agent name container.restart cfg.containerPackage "container"
+    ) containerServices;
+
+  validName = name: builtins.match "[A-Za-z0-9][A-Za-z0-9._-]*" name != null;
 
   vmAssertions = concatMap (
     name:
     let
       vm = cfg.vms.${name};
-      validName = builtins.match "[A-Za-z0-9][A-Za-z0-9._-]*" name != null;
     in
     [
       {
-        assertion = validName;
+        assertion = validName name;
         message = "services.lemon.vms.${name}: the name is not valid for Lemon";
       }
       {
@@ -341,7 +334,7 @@ let
   ) (builtins.attrNames cfg.vms);
 
   containerAssertions = map (name: {
-    assertion = builtins.match "[A-Za-z0-9][A-Za-z0-9._-]*" name != null;
+    assertion = validName name;
     message = "services.lemon.containers.${name}: the name is not valid for Lemon";
   }) (builtins.attrNames cfg.containers);
 in
@@ -354,6 +347,13 @@ in
       default = self.packages.${pkgs.stdenv.hostPlatform.system}.default;
       defaultText = lib.literalExpression "lemon.packages.${pkgs.system}.default";
       description = "Lemon package used by the generated LaunchAgents.";
+    };
+
+    containerPackage = mkOption {
+      type = types.package;
+      default = self.packages.${pkgs.stdenv.hostPlatform.system}.container-runtime;
+      defaultText = lib.literalExpression "lemon.packages.${pkgs.system}.container-runtime";
+      description = "Apple container package used by container LaunchAgents.";
     };
 
     vms = mkOption {
@@ -376,19 +376,23 @@ in
       ++ [
         {
           assertion =
-            intersectLists (builtins.attrNames enabledServices) (builtins.attrNames cfg.containers) == [ ];
+            intersectLists (builtins.attrNames vmServices) (builtins.attrNames cfg.containers) == [ ];
           message = "a Lemon VM service and container cannot have the same name";
         }
       ];
-    home.packages = [ cfg.package ];
-    home.file = definitionFiles;
-    home.activation.lemonDirectories = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
-      $DRY_RUN_CMD mkdir -p ${lib.escapeShellArg logDirectory}
-    '';
-    home.activation.setupLaunchAgents = lib.hm.dag.entryAfter [
-      "lemonDirectories"
-      "linkGeneration"
-    ] (lib.mkDefault "");
+    home = {
+      packages = [ cfg.package ];
+      file = definitionFiles;
+      activation = {
+        lemonDirectories = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+          $DRY_RUN_CMD mkdir -p ${lib.escapeShellArg logDirectory}
+        '';
+        setupLaunchAgents = lib.hm.dag.entryAfter [
+          "lemonDirectories"
+          "linkGeneration"
+        ] (lib.mkDefault "");
+      };
+    };
     launchd.agents = agents;
   };
 }

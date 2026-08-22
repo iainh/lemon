@@ -50,10 +50,11 @@ nix run . -- doctor
 Initialize the Apple container runtime once with `container system start` before
 using container services.
 
-### Declarative VMs with Home Manager
+### Declarative services with Home Manager
 
 The flake exports `homeModules.default`, an experimental Home Manager module for
-declaring VMs and their per-user LaunchAgents. Add Lemon to your flake inputs:
+declaring VMs, containers, and their per-user LaunchAgents. Add Lemon to your
+flake inputs:
 
 ```nix
 {
