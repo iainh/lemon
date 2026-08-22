@@ -50,6 +50,79 @@ nix run . -- doctor
 Initialize the Apple container runtime once with `container system start` before
 using container services.
 
+### Declarative VMs with Home Manager
+
+The flake exports `homeModules.default`, an experimental Home Manager module for
+declaring VMs and their per-user LaunchAgents. Add Lemon to your flake inputs:
+
+```nix
+{
+  inputs.lemon.url = "path:/Users/alice/src/lemon";
+  inputs.lemon.inputs.nixpkgs.follows = "nixpkgs";
+
+  outputs = { home-manager, lemon, nixpkgs, ... }: {
+    homeConfigurations.alice = home-manager.lib.homeManagerConfiguration {
+      pkgs = import nixpkgs { system = "aarch64-darwin"; };
+      modules = [
+        lemon.homeModules.default
+        {
+          services.lemon = {
+            enable = true;
+            vms.dev = {
+              disks = [ "/Users/alice/VMs/dev.raw" ];
+              cpus = 4;
+              memoryMiB = 4096;
+              ssh.authorizedKey =
+                "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA... alice@example";
+              service.enable = true;
+            };
+          };
+        }
+      ];
+    };
+  };
+}
+```
+
+EFI boot is the default. Set `boot.kernel`, and optionally `boot.initrd` and
+`boot.cmdline`, for direct kernel boot. The module derives a stable MAC address
+from the VM name, writes Lemon's VM and service TOML definitions, provisions
+the public key through cloud-init, and creates a `dev.lemon.dev` LaunchAgent.
+Apply additions, changes, and removals with `home-manager switch`.
+
+Nix owns definitions and service lifecycle for declared VMs. Use Lemon's
+read-only and guest commands such as `vm list`, `vm ssh`, `service status`, and
+`service logs`, but don't use `vm create`, `service create`, `service delete`,
+or `service reconcile` for the same names. Keep writable disks outside the Nix
+store. Removing a VM from Home Manager doesn't remove its disks or mutable EFI
+variable store.
+
+Container declarations follow the same shape as NixOS
+`virtualisation.oci-containers.containers`:
+
+```nix
+services.lemon.containers.nzbget = {
+  image = "ghcr.io/hotio/nzbget";
+  autoStart = true;
+  ports = [ "6789:6789" ];
+  environment = {
+    PUID = "1000";
+    PGID = "1000";
+    UMASK = "002";
+    TZ = "America/Toronto";
+  };
+  volumes = [
+    "/Users/alice/Library/Application Support/nzbget:/config"
+    "/Users/alice/Data:/data"
+  ];
+};
+```
+
+Lemon translates `ports`, `environment`, and `volumes` to Apple container
+arguments. Optional `cpus`, `memory`, `cmd`, and `restart` settings are also
+available. With `autoStart = false`, Nix writes the service definition but does
+not install its LaunchAgent.
+
 ## Usage
 
 The usual workflow is:
