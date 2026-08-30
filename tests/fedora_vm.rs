@@ -1,16 +1,13 @@
 #![cfg(target_os = "macos")]
 
 use std::fs::{self, File};
-use std::io::{self, BufReader, Read};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
-use sha2::{Digest, Sha256};
-use xz2::read::XzDecoder;
 
 const CLOUD_DOWNLOAD_PAGE: &str = "https://fedoraproject.org/cloud/download/";
 const RELEASE_METADATA: &str = "https://fedoraproject.org/releases.json";
@@ -62,9 +59,11 @@ fn boots_current_fedora_cloud_base_aarch64_image() -> Result<()> {
     }
     require_tool("curl")?;
     require_tool("launchctl")?;
+    require_tool("shasum")?;
     require_tool("ssh")?;
     require_tool("ssh-keygen")?;
     require_tool("vfkit")?;
+    require_tool("xz")?;
 
     let temp = tempfile::tempdir().context("failed to create test directory")?;
     let home = temp.path().join("home");
@@ -112,10 +111,16 @@ fn boots_current_fedora_cloud_base_aarch64_image() -> Result<()> {
 
     let disk = temp.path().join("fedora-server.raw");
     eprintln!("Expanding {}", compressed.display());
-    let input = BufReader::new(File::open(&compressed)?);
-    let mut decoder = XzDecoder::new(input);
-    let mut output = File::create(&disk)?;
-    io::copy(&mut decoder, &mut output).context("failed to expand Fedora image")?;
+    let output = File::create(&disk)?;
+    let status = Command::new("xz")
+        .args(["--decompress", "--stdout", "--"])
+        .arg(&compressed)
+        .stdout(Stdio::from(output.try_clone()?))
+        .status()
+        .context("failed to execute xz")?;
+    if !status.success() {
+        bail!("failed to expand Fedora image: xz exited with {status}");
+    }
     output.sync_all()?;
 
     let lemon = env!("CARGO_BIN_EXE_lemon");
@@ -244,17 +249,32 @@ fn download(url: &str, destination: &Path) -> Result<()> {
 }
 
 fn sha256(path: &Path) -> Result<String> {
-    let mut file = BufReader::new(File::open(path)?);
-    let mut hasher = Sha256::new();
-    let mut buffer = vec![0; 1024 * 1024];
-    loop {
-        let count = file.read(&mut buffer)?;
-        if count == 0 {
-            break;
-        }
-        hasher.update(&buffer[..count]);
+    let output = Command::new("shasum")
+        .args(["-a", "256", "--"])
+        .arg(path)
+        .output()
+        .with_context(|| format!("failed to execute shasum for {}", path.display()))?;
+    if !output.status.success() {
+        bail!(
+            "failed to hash {}: shasum exited with {}: {}",
+            path.display(),
+            output.status,
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
     }
-    Ok(format!("{:x}", hasher.finalize()))
+    let stdout = String::from_utf8(output.stdout).context("shasum output is not UTF-8")?;
+    let digest = stdout
+        .split_whitespace()
+        .next()
+        .context("shasum returned no digest")?;
+    if digest.len() != 64
+        || !digest
+            .chars()
+            .all(|character| character.is_ascii_hexdigit())
+    {
+        bail!("shasum returned an invalid SHA-256 digest: {digest:?}");
+    }
+    Ok(digest.to_ascii_lowercase())
 }
 
 fn run_lemon<const N: usize>(lemon: &str, home: &Path, args: [&str; N]) -> Result<()> {

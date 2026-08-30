@@ -2,7 +2,6 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
-use directories::ProjectDirs;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 use crate::fsutil::{atomic_write, clone_file};
@@ -88,11 +87,10 @@ impl Store {
             (None, None) => {}
             _ => bail!("LEMON_CONFIG_DIR and LEMON_DATA_DIR must be set together"),
         }
-        let dirs = ProjectDirs::from("dev", "lemon", "lemon")
-            .context("could not determine the current user's home directory")?;
+        let directory = home_dir()?.join("Library/Application Support/dev.lemon.lemon");
         Ok(Self {
-            config_dir: dirs.config_dir().to_path_buf(),
-            data_dir: dirs.data_dir().to_path_buf(),
+            config_dir: directory.clone(),
+            data_dir: directory,
         })
     }
 
@@ -274,6 +272,17 @@ impl Store {
     pub fn list_services(&self) -> Result<Vec<ServiceConfig>> {
         read_dir_toml(&self.config_dir.join("services"))
     }
+}
+
+pub fn home_dir() -> Result<PathBuf> {
+    let home = std::env::var_os("HOME")
+        .filter(|home| !home.is_empty())
+        .context("HOME is not set")?;
+    let home = PathBuf::from(home);
+    if !home.is_absolute() {
+        bail!("HOME must be an absolute path ({})", home.display());
+    }
+    Ok(home)
 }
 
 pub fn validate_name(name: &str) -> Result<()> {

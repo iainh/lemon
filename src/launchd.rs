@@ -8,9 +8,8 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
-use plist::{Dictionary, Value};
 
-use crate::config::{LABEL_PREFIX, ServiceConfig, Store, Workload};
+use crate::config::{LABEL_PREFIX, ServiceConfig, Store, Workload, home_dir};
 use crate::fsutil::atomic_write;
 use crate::logs;
 use crate::runtime::run_checked;
@@ -33,6 +32,148 @@ pub struct JobStatus {
     pub last_exit_code: Option<i32>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum KeepAlive {
+    Always(bool),
+    UnsuccessfulExit,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct LaunchdJob {
+    label: String,
+    program_arguments: Vec<String>,
+    run_at_load: bool,
+    keep_alive: KeepAlive,
+    process_type: &'static str,
+    throttle_interval: u64,
+    exit_timeout: u64,
+    environment: Vec<(&'static str, String)>,
+    standard_out_path: String,
+    standard_error_path: String,
+}
+
+impl LaunchdJob {
+    fn to_xml(&self) -> Result<Vec<u8>> {
+        let mut output = String::from(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
+             <!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n\
+             <plist version=\"1.0\">\n\
+             <dict>\n",
+        );
+        write_key(&mut output, 1, "Label")?;
+        write_string(&mut output, 1, &self.label)?;
+        write_key(&mut output, 1, "ProgramArguments")?;
+        write_indent(&mut output, 1);
+        output.push_str("<array>\n");
+        for argument in &self.program_arguments {
+            write_string(&mut output, 2, argument)?;
+        }
+        write_indent(&mut output, 1);
+        output.push_str("</array>\n");
+        write_key(&mut output, 1, "RunAtLoad")?;
+        write_boolean(&mut output, 1, self.run_at_load);
+        write_key(&mut output, 1, "KeepAlive")?;
+        match self.keep_alive {
+            KeepAlive::Always(value) => write_boolean(&mut output, 1, value),
+            KeepAlive::UnsuccessfulExit => {
+                write_indent(&mut output, 1);
+                output.push_str("<dict>\n");
+                write_key(&mut output, 2, "SuccessfulExit")?;
+                write_boolean(&mut output, 2, false);
+                write_indent(&mut output, 1);
+                output.push_str("</dict>\n");
+            }
+        }
+        write_key(&mut output, 1, "ProcessType")?;
+        write_string(&mut output, 1, self.process_type)?;
+        write_key(&mut output, 1, "ThrottleInterval")?;
+        write_integer(&mut output, 1, self.throttle_interval);
+        write_key(&mut output, 1, "ExitTimeOut")?;
+        write_integer(&mut output, 1, self.exit_timeout);
+        if !self.environment.is_empty() {
+            write_key(&mut output, 1, "EnvironmentVariables")?;
+            write_indent(&mut output, 1);
+            output.push_str("<dict>\n");
+            for (key, value) in &self.environment {
+                write_key(&mut output, 2, key)?;
+                write_string(&mut output, 2, value)?;
+            }
+            write_indent(&mut output, 1);
+            output.push_str("</dict>\n");
+        }
+        write_key(&mut output, 1, "StandardOutPath")?;
+        write_string(&mut output, 1, &self.standard_out_path)?;
+        write_key(&mut output, 1, "StandardErrorPath")?;
+        write_string(&mut output, 1, &self.standard_error_path)?;
+        output.push_str("</dict>\n</plist>\n");
+        Ok(output.into_bytes())
+    }
+}
+
+fn write_key(output: &mut String, depth: usize, key: &str) -> Result<()> {
+    write_text_element(output, depth, "key", key)
+}
+
+fn write_string(output: &mut String, depth: usize, value: &str) -> Result<()> {
+    write_text_element(output, depth, "string", value)
+}
+
+fn write_text_element(output: &mut String, depth: usize, tag: &str, value: &str) -> Result<()> {
+    write_indent(output, depth);
+    output.push('<');
+    output.push_str(tag);
+    output.push('>');
+    write_xml_text(output, value)?;
+    output.push_str("</");
+    output.push_str(tag);
+    output.push_str(">\n");
+    Ok(())
+}
+
+fn write_xml_text(output: &mut String, value: &str) -> Result<()> {
+    for character in value.chars() {
+        if !is_xml_character(character) {
+            bail!(
+                "launchd value contains character U+{:04X}, which XML 1.0 does not allow",
+                character as u32
+            );
+        }
+        match character {
+            '&' => output.push_str("&amp;"),
+            '<' => output.push_str("&lt;"),
+            '>' => output.push_str("&gt;"),
+            _ => output.push(character),
+        }
+    }
+    Ok(())
+}
+
+fn is_xml_character(character: char) -> bool {
+    matches!(character, '\u{9}' | '\u{a}' | '\u{d}')
+        || matches!(
+            character,
+            '\u{20}'..='\u{d7ff}' | '\u{e000}'..='\u{fffd}' | '\u{10000}'..='\u{10ffff}'
+        )
+}
+
+fn write_boolean(output: &mut String, depth: usize, value: bool) {
+    write_indent(output, depth);
+    output.push_str(if value { "<true/>\n" } else { "<false/>\n" });
+}
+
+fn write_integer(output: &mut String, depth: usize, value: u64) {
+    write_indent(output, depth);
+    output.push_str("<integer>");
+    output.push_str(&value.to_string());
+    output.push_str("</integer>\n");
+}
+
+fn write_indent(output: &mut String, depth: usize) {
+    for _ in 0..depth {
+        output.push('\t');
+    }
+}
+
 impl JobState {
     pub fn as_str(self) -> &'static str {
         match self {
@@ -48,8 +189,7 @@ pub fn label(name: &str) -> String {
 }
 
 pub fn agent_path(name: &str) -> Result<PathBuf> {
-    let home = std::env::var_os("HOME").context("HOME is not set")?;
-    Ok(PathBuf::from(home)
+    Ok(home_dir()?
         .join("Library/LaunchAgents")
         .join(format!("{}.plist", label(name))))
 }
@@ -63,125 +203,75 @@ pub fn write_agent(store: &Store, service: &ServiceConfig) -> Result<PathBuf> {
     let path = agent_path(&service.name)?;
     fs::create_dir_all(path.parent().expect("launch agent has a parent"))?;
     let runtime = runtime_executable(service)?;
-    let job = job_dictionary(store, service, executable, runtime);
-    let mut body = Vec::new();
-    plist::to_writer_xml(&mut body, &Value::Dictionary(job))
+    let body = job(store, service, executable, runtime)?
+        .to_xml()
         .context("failed to serialize LaunchAgent")?;
     atomic_write(&path, &body)?;
     Ok(path)
 }
 
-fn job_dictionary(
+fn job(
     store: &Store,
     service: &ServiceConfig,
     executable: PathBuf,
     runtime: PathBuf,
-) -> Dictionary {
+) -> Result<LaunchdJob> {
     let log_dir = store.log_dir();
-    let mut job = Dictionary::new();
-    job.insert("Label".into(), Value::String(label(&service.name)));
-    job.insert(
-        "ProgramArguments".into(),
-        Value::Array(vec![
-            Value::String(executable.display().to_string()),
-            Value::String("run-service".into()),
-            Value::String(service.name.clone()),
-        ]),
-    );
-    job.insert("RunAtLoad".into(), Value::Boolean(true));
-    job.insert("KeepAlive".into(), Value::Boolean(service.restart));
-    job.insert("ProcessType".into(), Value::String("Background".into()));
-    job.insert("ThrottleInterval".into(), Value::Integer(5.into()));
-    job.insert("ExitTimeOut".into(), Value::Integer(15.into()));
-    let mut environment = Dictionary::new();
-    environment.insert(
-        "LEMON_CONFIG_DIR".into(),
-        Value::String(store.config_dir.display().to_string()),
-    );
-    environment.insert(
-        "LEMON_DATA_DIR".into(),
-        Value::String(store.data_dir.display().to_string()),
-    );
-    environment.insert(
-        "LEMON_RUNTIME".into(),
-        Value::String(runtime.display().to_string()),
-    );
+    let mut environment = vec![
+        ("LEMON_CONFIG_DIR", path_string(&store.config_dir)?),
+        ("LEMON_DATA_DIR", path_string(&store.data_dir)?),
+        ("LEMON_RUNTIME", path_string(&runtime)?),
+    ];
     if let Some(path) = std::env::var_os("PATH") {
-        environment.insert(
-            "PATH".into(),
-            Value::String(path.to_string_lossy().into_owned()),
-        );
+        environment.push((
+            "PATH",
+            path.to_str().context("PATH is not valid UTF-8")?.to_owned(),
+        ));
     }
-    job.insert(
-        "EnvironmentVariables".into(),
-        Value::Dictionary(environment),
-    );
-    job.insert(
-        "StandardOutPath".into(),
-        Value::String(
-            log_dir
-                .join(format!("{}.log", service.name))
-                .display()
-                .to_string(),
-        ),
-    );
-    job.insert(
-        "StandardErrorPath".into(),
-        Value::String(
-            log_dir
-                .join(format!("{}.error.log", service.name))
-                .display()
-                .to_string(),
-        ),
-    );
-    job
+    Ok(LaunchdJob {
+        label: label(&service.name),
+        program_arguments: vec![
+            path_string(&executable)?,
+            "run-service".into(),
+            service.name.clone(),
+        ],
+        run_at_load: true,
+        keep_alive: KeepAlive::Always(service.restart),
+        process_type: "Background",
+        throttle_interval: 5,
+        exit_timeout: 15,
+        environment,
+        standard_out_path: path_string(&log_dir.join(format!("{}.log", service.name)))?,
+        standard_error_path: path_string(&log_dir.join(format!("{}.error.log", service.name)))?,
+    })
 }
 
-fn container_system_job_dictionary(store: &Store, runtime: PathBuf) -> Dictionary {
-    let mut job = Dictionary::new();
-    job.insert(
-        "Label".into(),
-        Value::String(label(CONTAINER_SYSTEM_JOB_NAME)),
-    );
-    job.insert(
-        "ProgramArguments".into(),
-        Value::Array(vec![
-            Value::String(runtime.display().to_string()),
-            Value::String("system".into()),
-            Value::String("start".into()),
-            Value::String("--disable-kernel-install".into()),
-            Value::String("--timeout".into()),
-            Value::String(CONTAINER_SYSTEM_TIMEOUT_SECONDS.to_string()),
-        ]),
-    );
-    job.insert("RunAtLoad".into(), Value::Boolean(true));
-    let mut keep_alive = Dictionary::new();
-    keep_alive.insert("SuccessfulExit".into(), Value::Boolean(false));
-    job.insert("KeepAlive".into(), Value::Dictionary(keep_alive));
-    job.insert("ProcessType".into(), Value::String("Background".into()));
-    job.insert("ThrottleInterval".into(), Value::Integer(5.into()));
-    job.insert("ExitTimeOut".into(), Value::Integer(15.into()));
-    job.insert(
-        "StandardOutPath".into(),
-        Value::String(
-            store
-                .log_dir()
-                .join("container-system.log")
-                .display()
-                .to_string(),
-        ),
-    );
-    job.insert(
-        "StandardErrorPath".into(),
-        Value::String(
-            store
-                .log_dir()
-                .join("container-system.error.log")
-                .display()
-                .to_string(),
-        ),
-    );
-    job
+fn container_system_job(store: &Store, runtime: PathBuf) -> Result<LaunchdJob> {
+    Ok(LaunchdJob {
+        label: label(CONTAINER_SYSTEM_JOB_NAME),
+        program_arguments: vec![
+            path_string(&runtime)?,
+            "system".into(),
+            "start".into(),
+            "--disable-kernel-install".into(),
+            "--timeout".into(),
+            CONTAINER_SYSTEM_TIMEOUT_SECONDS.to_string(),
+        ],
+        run_at_load: true,
+        keep_alive: KeepAlive::UnsuccessfulExit,
+        process_type: "Background",
+        throttle_interval: 5,
+        exit_timeout: 15,
+        environment: Vec::new(),
+        standard_out_path: path_string(&store.log_dir().join("container-system.log"))?,
+        standard_error_path: path_string(&store.log_dir().join("container-system.error.log"))?,
+    })
+}
+
+fn path_string(path: &Path) -> Result<String> {
+    path.to_str()
+        .map(str::to_owned)
+        .with_context(|| format!("path is not valid UTF-8: {}", path.display()))
 }
 
 fn runtime_executable(service: &ServiceConfig) -> Result<PathBuf> {
@@ -256,9 +346,8 @@ fn write_container_system_agent(store: &Store, runtime: PathBuf) -> Result<PathB
     {
         return Ok(path);
     }
-    let job = container_system_job_dictionary(store, runtime);
-    let mut body = Vec::new();
-    plist::to_writer_xml(&mut body, &Value::Dictionary(job))
+    let body = container_system_job(store, runtime)?
+        .to_xml()
         .context("failed to serialize container system LaunchAgent")?;
     atomic_write(&path, &body)?;
     Ok(path)
@@ -561,19 +650,14 @@ mod tests {
             config_dir: "/tmp/config".into(),
             data_dir: "/tmp/data".into(),
         };
-        let job = container_system_job_dictionary(&store, "/usr/local/bin/container".into());
-        assert_eq!(
-            job["Label"].as_string(),
-            Some("dev.lemon._container-system")
-        );
-        let args = job["ProgramArguments"].as_array().unwrap();
-        assert_eq!(args[1].as_string(), Some("system"));
-        assert_eq!(args[2].as_string(), Some("start"));
-        assert_eq!(args[3].as_string(), Some("--disable-kernel-install"));
-        assert_eq!(args[4].as_string(), Some("--timeout"));
-        assert_eq!(args[5].as_string(), Some("60"));
-        let keep_alive = job["KeepAlive"].as_dictionary().unwrap();
-        assert_eq!(keep_alive["SuccessfulExit"].as_boolean(), Some(false));
+        let job = container_system_job(&store, "/usr/local/bin/container".into()).unwrap();
+        assert_eq!(job.label, "dev.lemon._container-system");
+        assert_eq!(job.program_arguments[1], "system");
+        assert_eq!(job.program_arguments[2], "start");
+        assert_eq!(job.program_arguments[3], "--disable-kernel-install");
+        assert_eq!(job.program_arguments[4], "--timeout");
+        assert_eq!(job.program_arguments[5], "60");
+        assert_eq!(job.keep_alive, KeepAlive::UnsuccessfulExit);
     }
 
     #[test]
@@ -595,26 +679,92 @@ mod tests {
                 command: vec![],
             },
         };
-        let job = job_dictionary(
+        let job = job(
             &store,
             &service,
             "/usr/local/bin/lemon".into(),
             "/usr/local/bin/container".into(),
-        );
-        assert_eq!(job["Label"].as_string(), Some("dev.lemon.web"));
-        assert_eq!(job["KeepAlive"].as_boolean(), Some(true));
-        assert_eq!(job["ExitTimeOut"].as_signed_integer(), Some(15));
-        let args = job["ProgramArguments"].as_array().unwrap();
-        assert_eq!(args[1].as_string(), Some("run-service"));
-        assert_eq!(args[2].as_string(), Some("web"));
-        let environment = job["EnvironmentVariables"].as_dictionary().unwrap();
+        )
+        .unwrap();
+        assert_eq!(job.label, "dev.lemon.web");
+        assert_eq!(job.keep_alive, KeepAlive::Always(true));
+        assert_eq!(job.exit_timeout, 15);
+        assert_eq!(job.program_arguments[1], "run-service");
+        assert_eq!(job.program_arguments[2], "web");
         assert_eq!(
-            environment["LEMON_RUNTIME"].as_string(),
+            job.environment
+                .iter()
+                .find_map(|(key, value)| (*key == "LEMON_RUNTIME").then_some(value.as_str())),
             Some("/usr/local/bin/container")
         );
         assert_eq!(
-            environment["LEMON_CONFIG_DIR"].as_string(),
+            job.environment.iter().find_map(|(key, value)| {
+                (*key == "LEMON_CONFIG_DIR").then_some(value.as_str())
+            }),
             Some("/tmp/config")
         );
+    }
+
+    #[test]
+    fn launchd_job_xml_escapes_text_and_rejects_control_characters() {
+        let store = Store {
+            config_dir: "/tmp/config".into(),
+            data_dir: "/tmp/data".into(),
+        };
+        let mut job = container_system_job(&store, "/usr/local/bin/container".into()).unwrap();
+        job.label = "dev.lemon.<tea&biscuits>".into();
+
+        let xml = String::from_utf8(job.to_xml().unwrap()).unwrap();
+
+        assert!(xml.contains("dev.lemon.&lt;tea&amp;biscuits&gt;"));
+        job.label.push('\u{1}');
+        assert!(job.to_xml().unwrap_err().to_string().contains("U+0001"));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn generated_launchd_jobs_are_valid_property_lists() {
+        let store = Store {
+            config_dir: "/tmp/config".into(),
+            data_dir: "/tmp/data".into(),
+        };
+        let service = ServiceConfig {
+            name: "web".into(),
+            restart: true,
+            workload: Workload::Container {
+                image: "nginx:latest".into(),
+                cpus: None,
+                memory: None,
+                env: vec![],
+                publish: vec![],
+                volumes: vec![],
+                command: vec![],
+            },
+        };
+        let jobs = [
+            container_system_job(&store, "/usr/local/bin/container".into()).unwrap(),
+            job(
+                &store,
+                &service,
+                "/usr/local/bin/lemon".into(),
+                "/usr/local/bin/container".into(),
+            )
+            .unwrap(),
+        ];
+        let temp = tempfile::tempdir().unwrap();
+        for (index, job) in jobs.into_iter().enumerate() {
+            let path = temp.path().join(format!("job-{index}.plist"));
+            fs::write(&path, job.to_xml().unwrap()).unwrap();
+            let output = Command::new("/usr/bin/plutil")
+                .arg("-lint")
+                .arg(&path)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "plutil rejected generated job: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
     }
 }

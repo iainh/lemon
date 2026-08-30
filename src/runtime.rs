@@ -2,14 +2,13 @@ use std::ffi::OsString;
 use std::fs::{File, OpenOptions};
 use std::net::IpAddr;
 use std::os::fd::AsRawFd;
-use std::os::unix::ffi::OsStrExt;
+use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 use std::process::{Command, ExitStatus};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
-use sha2::{Digest, Sha256};
 
 use crate::config::{ServiceConfig, Store, VmBoot, VmConfig, Workload};
 use crate::launchd;
@@ -321,18 +320,23 @@ pub(crate) fn acquire_vm_lock(store: &Store, name: &str) -> Result<File> {
 
 pub(crate) fn acquire_vm_locks(store: &Store, vm: &VmConfig) -> Result<Vec<File>> {
     let mut locks = vec![acquire_vm_lock(store, &vm.name)?];
-    let mut disks = vm.disks.iter().collect::<Vec<_>>();
-    disks.sort();
-    disks.dedup();
-    for disk in disks {
-        let identity = disk
-            .canonicalize()
-            .with_context(|| format!("failed to resolve VM disk {}", disk.display()))?;
-        let digest = Sha256::digest(identity.as_os_str().as_bytes());
+    let mut disks = vm
+        .disks
+        .iter()
+        .map(|disk| {
+            let metadata = disk
+                .metadata()
+                .with_context(|| format!("failed to inspect VM disk {}", disk.display()))?;
+            Ok(((metadata.dev(), metadata.ino()), disk))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    disks.sort_by_key(|(identity, _)| *identity);
+    disks.dedup_by_key(|(identity, _)| *identity);
+    for ((device, inode), disk) in disks {
         let path = store
             .data_dir
             .join("disk-locks")
-            .join(format!("{digest:x}.lock"));
+            .join(format!("{device:x}-{inode:x}.lock"));
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).with_context(|| {
                 format!("failed to create disk lock directory {}", parent.display())
@@ -450,15 +454,17 @@ mod tests {
     }
 
     #[test]
-    fn prevents_two_vms_from_using_the_same_writable_disk() {
+    fn prevents_two_vms_from_using_hard_links_to_the_same_writable_disk() {
         let temp = tempfile::tempdir().unwrap();
         let store = Store {
             config_dir: temp.path().join("config"),
             data_dir: temp.path().join("data"),
         };
-        let disk = temp.path().join("disk.raw");
-        std::fs::write(&disk, []).unwrap();
-        let vm = |name: &str| VmConfig {
+        let first_disk = temp.path().join("disk.raw");
+        let second_disk = temp.path().join("disk-hard-link.raw");
+        std::fs::write(&first_disk, []).unwrap();
+        std::fs::hard_link(&first_disk, &second_disk).unwrap();
+        let vm = |name: &str, disk| VmConfig {
             name: name.into(),
             cpus: 1,
             memory_mib: 512,
@@ -467,14 +473,14 @@ mod tests {
             boot: VmBoot::Efi {
                 variable_store: temp.path().join(format!("{name}.efi")),
             },
-            disks: vec![disk.clone()],
+            disks: vec![disk],
         };
 
-        let _locks = acquire_vm_locks(&store, &vm("first")).unwrap();
-        let error = acquire_vm_locks(&store, &vm("second")).unwrap_err();
+        let _locks = acquire_vm_locks(&store, &vm("first", first_disk)).unwrap();
+        let error = acquire_vm_locks(&store, &vm("second", second_disk)).unwrap_err();
 
         assert!(error.to_string().contains("already in use"));
-        assert!(error.to_string().contains("disk.raw"));
+        assert!(error.to_string().contains("disk-hard-link.raw"));
     }
 
     #[test]

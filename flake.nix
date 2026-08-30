@@ -32,11 +32,7 @@
 
         cargoLock.lockFile = ./Cargo.lock;
         strictDeps = true;
-        nativeBuildInputs = with pkgs; [
-          makeWrapper
-          pkg-config
-        ];
-        buildInputs = [ pkgs.xz ];
+        nativeBuildInputs = [ pkgs.makeWrapper ];
 
         postInstall = ''
           wrapProgram $out/bin/lemon \
