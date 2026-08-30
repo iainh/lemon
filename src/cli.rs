@@ -550,6 +550,9 @@ fn run_service(command: ServiceCommand, store: &Store) -> Result<()> {
                 logs::purge_service(store, &service)?;
             }
             fs::remove_file(path)?;
+            if matches!(service.workload, Workload::Container { .. }) {
+                launchd::delete_container_system_if_unused(store)?;
+            }
             println!("Deleted service {name}");
         }
         ServiceCommand::Logs { name } => {

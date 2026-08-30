@@ -20,7 +20,9 @@ and logs remain in the current user's standard macOS Library directories.
 - Rust 1.85 or newer to build Lemon.
 - `vfkit` 0.6.1 or newer for full VMs: `brew install vfkit`.
 - Apple `container` and macOS 26 for containers. Install a signed release, then
-  initialize it once with `container system start`.
+  initialize its kernel once with `container system start`. Lemon restarts the
+  container system automatically for managed services after later logins and
+  reboots.
 
 Run `lemon doctor` to check the local tools and every VM's runtime files.
 
@@ -47,8 +49,9 @@ nix build
 nix run . -- doctor
 ```
 
-Initialize the Apple container runtime once with `container system start` before
-using container services.
+Initialize the Apple container runtime's kernel once with `container system
+start` before using container services. Lemon manages subsequent container
+system startup for its services.
 
 ### Declarative services with Home Manager
 
@@ -295,6 +298,13 @@ GUI domain. Starting a loaded service replaces the job so configuration changes
 take effect. launchd starts Lemon's hidden
 `run-service` command, which replaces itself with `vfkit` or `container` using
 `exec(2)`. Signals and exit status therefore reach the real runtime directly.
+Container services also install a shared
+`dev.lemon._container-system` LaunchAgent. It runs `container system start` at
+login and retries failed starts. Before executing a container workload, Lemon
+checks `container system status`, asks launchd to kick-start the shared agent if
+needed, and uses a 65-second deadline for API readiness. Deleting the last
+installed container service removes the shared agent.
+
 Stopping a VM service lets vfkit request a graceful guest shutdown before it
 falls back to a forced stop. Status output includes the process ID, run count,
 last exit code reported by launchd, and guest SSH readiness. Pass
@@ -346,6 +356,15 @@ Run the fast unit test suite with:
 cargo test
 ```
 
+An ignored container-service integration test uses a fake runtime to exercise
+real LaunchAgents. It verifies failed runtime startup retries, readiness gating,
+two workload starts, runtime recovery, workload restart, and shared-agent
+cleanup:
+
+```sh
+cargo test --test container_service -- --ignored --nocapture
+```
+
 An ignored end-to-end test discovers the current Fedora Cloud Base aarch64 raw
 image advertised at [fedoraproject.org/cloud/download](https://fedoraproject.org/cloud/download/),
 downloads and verifies it, provisions an SSH key with cloud-init, boots an EFI
@@ -355,7 +374,9 @@ VM as a real LaunchAgent, logs in over SSH, and tears everything down:
 cargo test --test fedora_vm -- --ignored --nocapture
 ```
 
-The integration test requires an Apple silicon Mac, `vfkit`, internet access,
-about 1.5 GB of download bandwidth, several gigabytes of temporary disk space,
-and a few minutes to run. All image, VM, and HOME data is kept in a temporary
-directory and removed at the end.
+The container-service test requires macOS and uses the current user's launchd
+GUI domain, but keeps files under a temporary HOME and refuses to replace an
+existing job with the same label. The Fedora test requires an Apple silicon Mac,
+`vfkit`, internet access, about 1.5 GB of download bandwidth, several gigabytes
+of temporary disk space, and a few minutes to run. Both tests remove their
+temporary jobs and files.

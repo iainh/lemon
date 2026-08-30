@@ -308,7 +308,30 @@ let
     mapAttrs' (name: vm: agent name vm.service.restart pkgs.vfkit "vfkit") vmServices
     // mapAttrs' (
       name: container: agent name container.restart cfg.containerPackage "container"
-    ) containerServices;
+    ) containerServices
+    // lib.optionalAttrs (containerServices != { }) {
+      lemon-container-system = {
+        enable = true;
+        config = {
+          Label = "dev.lemon._container-system";
+          ProgramArguments = [
+            "${cfg.containerPackage}/bin/container"
+            "system"
+            "start"
+            "--disable-kernel-install"
+            "--timeout"
+            "60"
+          ];
+          RunAtLoad = true;
+          KeepAlive.SuccessfulExit = false;
+          ProcessType = "Background";
+          ThrottleInterval = 5;
+          ExitTimeOut = 15;
+          StandardOutPath = "${logDirectory}/container-system.log";
+          StandardErrorPath = "${logDirectory}/container-system.error.log";
+        };
+      };
+    };
 
   validName = name: builtins.match "[A-Za-z0-9][A-Za-z0-9._-]*" name != null;
 

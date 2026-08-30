@@ -12,6 +12,7 @@ use anyhow::{Context, Result, bail};
 use sha2::{Digest, Sha256};
 
 use crate::config::{ServiceConfig, Store, VmBoot, VmConfig, Workload};
+use crate::launchd;
 
 pub fn vfkit_args(vm: &VmConfig, interactive: bool, log_path: &Path) -> Vec<OsString> {
     let mut args = vec![
@@ -154,9 +155,10 @@ pub fn exec_service(store: &Store, name: &str) -> Result<()> {
                 .exec()
         }
         Workload::Container { .. } => {
-            Command::new(runtime.as_deref().unwrap_or_else(|| "container".as_ref()))
-                .args(container_args(&service)?)
-                .exec()
+            let runtime = runtime.as_deref().unwrap_or_else(|| "container".as_ref());
+            launchd::wait_for_container_system(Path::new(runtime))
+                .context("container system is unavailable")?;
+            Command::new(runtime).args(container_args(&service)?).exec()
         }
     };
     Err(error).context("failed to execute service runtime")
